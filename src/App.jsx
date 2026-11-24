@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Search,
   Heart,
@@ -690,12 +691,12 @@ export default function MusicPlayer() {
   );
   const [history, setHistory] = useState(SAVED_HISTORY);
   const [repeatMode, setRepeatMode] = useState(
-    ['off', 'all', 'one'].includes(SAVED_PREFS.repeat) ? SAVED_PREFS.repeat : 'off'
+    ['off', 'all', 'one'].includes(SAVED_PREFS.repeatMode) ? SAVED_PREFS.repeatMode : 'all'
   );
   const [fullLyrics, setFullLyrics] = useState(false);
   const fullLyricsRef = useRef(null);
   const scrubbingRef = useRef(false);
-  const repeatRef = useRef('off');
+  const repeatRef = useRef('all');
   repeatRef.current = repeatMode;
 
   // Playback state (Audio mode uses Web Audio / synced timer fallback; Video mode uses YouTube IFrame)
@@ -1206,7 +1207,7 @@ export default function MusicPlayer() {
       suit: suitId,
       volume,
       mode: playbackMode,
-      repeat: repeatMode,
+      repeatMode,
     });
   }, [likedIds, suitId, volume, playbackMode, repeatMode]);
 
@@ -2351,10 +2352,17 @@ export default function MusicPlayer() {
       </main>
 
       {/* Lirik layar penuh */}
-      {fullLyrics && (
+      {fullLyrics && createPortal(
         <div
-          className="fixed inset-0 z-[55] flex flex-col"
+          className="flex flex-col"
           style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: '100dvh',
+            zIndex: 55,
             background: `radial-gradient(circle at 50% 0%, ${suit.orbA}, #07070b 70%)`,
             paddingTop: 'env(safe-area-inset-top, 0px)',
           }}
@@ -2381,7 +2389,7 @@ export default function MusicPlayer() {
 
           <div
             ref={fullLyricsRef}
-            className="relative flex-1 overflow-y-auto px-5 py-10 space-y-5"
+            className="relative flex-1 min-h-0 overflow-y-auto px-5 py-10 space-y-5"
             style={{
               maskImage: 'linear-gradient(180deg, transparent 0%, #000 10%, #000 90%, transparent 100%)',
               WebkitMaskImage: 'linear-gradient(180deg, transparent 0%, #000 10%, #000 90%, transparent 100%)',
@@ -2481,7 +2489,8 @@ export default function MusicPlayer() {
               <span className="w-10 h-10" aria-hidden="true" />
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Pilih playlist untuk menambah lagu */}
