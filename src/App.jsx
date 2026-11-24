@@ -34,15 +34,24 @@ import {
   Repeat,
   Repeat1,
 } from 'lucide-react';
-  Repeat,
-  Repeat1,
-} from 'lucide-react';
 
-// <--- TEMPELKAN KODE BAGIAN A DI SINI --->
+// Paksa YouTube IFrame & WebView mengira layar selalu aktif (tidak pernah hidden/pause)
+if (typeof document !== 'undefined') {
+  try {
+    Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+    Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+    const blockVisibility = (e) => {
+      e.stopImmediatePropagation();
+    };
+    document.addEventListener('visibilitychange', blockVisibility, true);
+    window.addEventListener('visibilitychange', blockVisibility, true);
+    window.addEventListener('pagehide', blockVisibility, true);
+    window.addEventListener('blur', blockVisibility, true);
+  } catch {
+    // abaikan jika tidak didukung
+  }
+}
 
-const SUITS = {
-  classic: {
-    
 /**
  * Spider-Verse Suit Theme Definitions
  * Controls accent colors, glow shadows, and ambient backdrop gradients.
