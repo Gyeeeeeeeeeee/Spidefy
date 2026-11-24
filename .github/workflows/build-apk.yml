@@ -70,6 +70,7 @@ jobs:
                 if (getBridge() == null) return;
                 WebView w = getBridge().getWebView();
                 if (w == null) return;
+                w.getSettings().setMediaPlaybackRequiresUserGesture(false);
                 w.onResume();
                 w.resumeTimers();
                 w.dispatchWindowVisibilityChanged(View.VISIBLE);
@@ -109,6 +110,18 @@ jobs:
           fi
           echo "=== Manifest plugin latar belakang (untuk cek) ==="
           cat node_modules/@anuradev/capacitor-background-mode/android/src/main/AndroidManifest.xml || echo "plugin tidak ditemukan"
+
+      - name: Pastikan service media bertipe mediaPlayback
+        run: |
+          cd cap
+          for f in node_modules/@jofr/capacitor-media-session/android/src/main/AndroidManifest.xml node_modules/@anuradev/capacitor-background-mode/android/src/main/AndroidManifest.xml; do
+            if [ -f "$f" ] && grep -q "<service" "$f" && ! grep -q "foregroundServiceType" "$f"; then
+              sed -i 's#<service#<service android:foregroundServiceType="mediaPlayback"#' "$f"
+              echo "Diperbaiki: $f"
+            fi
+          done
+          echo "=== Manifest plugin media (untuk cek) ==="
+          cat node_modules/@jofr/capacitor-media-session/android/src/main/AndroidManifest.xml || echo "plugin media tidak ditemukan"
 
       - name: Pasang ikon aplikasi
         run: |
