@@ -666,7 +666,7 @@ function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, 
       <div className="rounded-xl bg-white/[0.05] p-3 text-[11px] text-neutral-300 space-y-1">
         <div className="font-bold text-white">Status</div>
         <div>{backendConnected ? 'Terhubung ke pencarian YouTube Music.' : 'Memakai katalog bawaan (pencarian belum terhubung).'}</div>
-        <div className="text-neutral-400">Lagu diputar lewat pemutar resmi YouTube, jadi berhenti saat layar mati.</div>
+        <div className="text-neutral-400">Di aplikasi Android (APK), musik tetap jalan saat layar mati atau app ditutup ke latar belakang. Di browser biasa bisa berhenti.</div>
       </div>
     </div>
   );
@@ -1289,24 +1289,29 @@ export default function MusicPlayer() {
     handleSelectTrack(startTrack || pl.tracks[0], true, pl.tracks);
   };
 
-  // Musik tetap jalan di latar belakang (aplikasi Android)
+  // Musik tetap jalan di latar belakang & layar mati (aplikasi Android)
   useEffect(() => {
     try {
       const bg = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BackgroundMode;
       if (!bg) return;
-      const run = (fn) => {
+      const run = (name, arg) => {
         try {
-          const r = fn && fn.call(bg);
+          const fn = bg[name];
+          const r = typeof fn === 'function' ? fn.call(bg, arg) : null;
           if (r && typeof r.catch === 'function') r.catch(() => {});
         } catch {
           // abaikan
         }
       };
       if (isPlaying) {
-        run(bg.enable);
-        run(bg.disableWebViewOptimizations);
+        run('requestNotificationsPermission');
+        run('requestForegroundPermission');
+        run('enable', { title: 'SpideyFy', text: 'Musik sedang diputar', channelName: 'SpideyFy Player' });
+        run('disableWebViewOptimizations');
+        run('disableBatteryOptimizations');
       } else {
-        run(bg.disable);
+        run('enableWebViewOptimizations');
+        run('disable');
       }
     } catch {
       // abaikan
