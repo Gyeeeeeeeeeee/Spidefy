@@ -1,158 +1,44 @@
-name: Build Android APK
+=== BAGIAN A: Tambahkan tepat di bawah baris `} from 'lucide-react';` (sebelum `const SUITS = {`) ===
 
-on:
-  workflow_dispatch:
+//Paksa YouTube IFrame & WebView mengira layar selalu aktif (tidak pernah hidden/pause)
+if (typeof document !== 'undefined') {
+  try {
+    Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+    Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+    const blockVisibility = (e) => {
+      e.stopImmediatePropagation();
+    };
+    document.addEventListener('visibilitychange', blockVisibility, true);
+    window.addEventListener('visibilitychange', blockVisibility, true);
+    window.addEventListener('pagehide', blockVisibility, true);
+    window.addEventListener('blur', blockVisibility, true);
+  } catch {
+    // abaikan jika tidak didukung
+  }
+}
 
-permissions:
-  contents: write
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+=== BAGIAN B: Cari blok `onStateChange: (ev) => {` di dalam `src/App.jsx` dan ganti seluruh blok `onStateChange` tersebut dengan kode berikut ===
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-
-      - name: Buat project Android (Capacitor)
-        run: |
-          mkdir cap && cd cap
-          npm init -y
-          npm install @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
-          npm install @anuradev/capacitor-background-mode --legacy-peer-deps || echo "::warning::Plugin latar belakang GAGAL dipasang"
-          npm install @jofr/capacitor-media-session --legacy-peer-deps || echo "::warning::Plugin kontrol media GAGAL dipasang"
-          mkdir www
-          echo '<!doctype html><html><head><meta charset="utf-8"><title>SpideyFy</title></head><body style="background:#0b0b10"></body></html>' > www/index.html
-          cat > capacitor.config.json <<'JSON'
-          {
-            "appId": "app.vercel.spidefy",
-            "appName": "SpideyFy",
-            "webDir": "www",
-            "backgroundColor": "#0b0b10",
-            "android": {
-              "backgroundColor": "#0b0b10",
-              "adjustMarginsForEdgeToEdge": "force"
-            },
-            "server": {
-              "url": "https://spidefy.vercel.app",
-              "androidScheme": "https"
-            }
-          }
-          JSON
-          npx cap add android
-          sed -i 's#</manifest>#    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />\n</manifest>#' android/app/src/main/AndroidManifest.xml
-          npx cap sync android
-          # Layar penuh tapi tidak menimpa status bar / tombol navigasi: latar gelap + ikon status terang
-          STYLES=android/app/src/main/res/values/styles.xml
-          sed -i 's#<item name="windowNoTitle">true</item>#<item name="windowNoTitle">true</item>\n        <item name="android:windowBackground">\#0b0b10</item>\n        <item name="android:windowLightStatusBar">false</item>#' "$STYLES"
-
-          # Jaga WebView tetap hidup saat app ke latar belakang / layar mati (supaya musik tidak dijeda)
-          MA=$(find android/app/src/main/java -name MainActivity.java | head -1)
-          if [ -n "$MA" ]; then
-          PKG=$(grep -m1 '^package ' "$MA" | sed 's/package \(.*\);/\1/')
-          cat > "$MA" <<JAVA
-          package $PKG;
-
-          import android.view.View;
-          import android.webkit.WebView;
-          import com.getcapacitor.BridgeActivity;
-
-          public class MainActivity extends BridgeActivity {
-            @Override
-            public void onCreate(android.os.Bundle savedInstanceState) {
-              super.onCreate(savedInstanceState);
-              // Android 13+: izin notifikasi harus diminta, kalau tidak widget pemutar tidak muncul
-              if (android.os.Build.VERSION.SDK_INT >= 33
-                  && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
-                      != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(new String[] { android.Manifest.permission.POST_NOTIFICATIONS }, 1001);
+          onStateChange: (ev) => {
+            if (ev.data === window.YT.PlayerState.PLAYING) {
+              setIsPlaying(true);
+            } else if (ev.data === window.YT.PlayerState.PAUSED) {
+              if (isPlayingRef.current) {
+                // Bukan user yang menekan pause (dipause otomatis oleh sistem/YouTube): paksa lanjut!
+                setTimeout(() => {
+                  try {
+                    if (isPlayingRef.current && ev.target && typeof ev.target.playVideo === 'function') {
+                      ev.target.playVideo();
+                    }
+                  } catch {
+                    // abaikan
+                  }
+                }, 120);
+              } else {
+                setIsPlaying(false);
               }
+            } else if (ev.data === window.YT.PlayerState.ENDED) {
+              if (stepNextRef.current) stepNextRef.current();
             }
-
-            private void keepAwake() {
-              try {
-                if (getBridge() == null) return;
-                WebView w = getBridge().getWebView();
-                if (w == null) return;
-                w.getSettings().setMediaPlaybackRequiresUserGesture(false);
-                w.onResume();
-                w.resumeTimers();
-                w.dispatchWindowVisibilityChanged(View.VISIBLE);
-              } catch (Exception e) {
-                // abaikan
-              }
-            }
-
-            private void keepAwakeRepeatedly() {
-              keepAwake();
-              try {
-                final WebView w = getBridge().getWebView();
-                for (int i = 1; i <= 8; i++) {
-                  w.postDelayed(new Runnable() {
-                    @Override
-                    public void run() { keepAwake(); }
-                  }, i * 700L);
-                }
-              } catch (Exception e) {
-                // abaikan
-              }
-            }
-
-            @Override
-            public void onPause() {
-              super.onPause();
-              keepAwakeRepeatedly();
-            }
-
-            @Override
-            public void onStop() {
-              super.onStop();
-              keepAwakeRepeatedly();
-            }
-          }
-          JAVA
-          fi
-          echo "=== Manifest plugin latar belakang (untuk cek) ==="
-          cat node_modules/@anuradev/capacitor-background-mode/android/src/main/AndroidManifest.xml || echo "plugin tidak ditemukan"
-
-      - name: Pastikan service media bertipe mediaPlayback
-        run: |
-          cd cap
-          for f in node_modules/@jofr/capacitor-media-session/android/src/main/AndroidManifest.xml node_modules/@anuradev/capacitor-background-mode/android/src/main/AndroidManifest.xml; do
-            if [ -f "$f" ] && grep -q "<service" "$f" && ! grep -q "foregroundServiceType" "$f"; then
-              sed -i 's#<service#<service android:foregroundServiceType="mediaPlayback"#' "$f"
-              echo "Diperbaiki: $f"
-            fi
-          done
-          echo "=== Manifest plugin media (untuk cek) ==="
-          cat node_modules/@jofr/capacitor-media-session/android/src/main/AndroidManifest.xml || echo "plugin media tidak ditemukan"
-
-      - name: Pasang ikon aplikasi
-        run: |
-          cd cap/android/app/src/main/res
-          rm -rf mipmap-anydpi-v26
-          for d in mipmap-mdpi mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
-            cp "$GITHUB_WORKSPACE/public/icon-512.png" "$d/ic_launcher.png"
-            cp "$GITHUB_WORKSPACE/public/icon-round-512.png" "$d/ic_launcher_round.png"
-            cp "$GITHUB_WORKSPACE/public/icon-512.png" "$d/ic_launcher_foreground.png"
-          done
-
-      - name: Build APK
-        run: |
-          cd cap/android
-          chmod +x gradlew
-          ./gradlew assembleDebug
-
-      - name: Rilis APK
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: apk-${{ github.run_number }}
-          name: SpideyFy APK ${{ github.run_number }}
-          files: cap/android/app/build/outputs/apk/debug/app-debug.apk
+          },
