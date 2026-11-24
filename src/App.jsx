@@ -1099,7 +1099,7 @@ export default function MusicPlayer() {
 
   const windowClass = useMemo(() => {
     const base =
-      'w-full h-full flex flex-col overflow-hidden border border-white/15 bg-[#121218]/80 backdrop-blur-2xl shadow-[0_30px_90px_rgba(0,0,0,0.82)] transition-all duration-500';
+      'w-full h-full flex flex-col overflow-hidden max-lg:rounded-none! max-lg:border-0! border border-white/15 bg-[#121218]/80 backdrop-blur-2xl shadow-[0_30px_90px_rgba(0,0,0,0.82)] transition-all duration-500';
     if (windowMode === 'fullscreen') {
       return `${base} max-w-none max-h-none rounded-xl`;
     }
@@ -1115,7 +1115,7 @@ export default function MusicPlayer() {
   return (
     <div
       style={themeVars}
-      className="relative w-screen h-screen overflow-hidden bg-[#060609] text-neutral-100 select-none flex flex-col"
+      className="relative w-full h-[100dvh] overflow-hidden bg-[#060609] text-neutral-100 select-none flex flex-col"
     >
       {/* Spider-Verse Ambient Backdrop */}
       <div
@@ -1167,7 +1167,7 @@ export default function MusicPlayer() {
       </header>
 
       {/* Main macOS Desktop Stage */}
-      <main className="relative z-10 flex-1 min-h-0 flex items-center justify-center p-2.5 sm:p-4 pb-20">
+      <main className="relative z-10 flex-1 min-h-0 flex items-center justify-center p-0 sm:p-4 pb-14 lg:pb-20">
         {(windowMode === 'minimized' || windowMode === 'closed') && (
           <div className="fixed inset-0 flex flex-col items-center justify-center pointer-events-none z-10">
             <div
@@ -1385,8 +1385,7 @@ export default function MusicPlayer() {
                   </button>
                 </div>
 
-                <div className="flex items-center justify-between gap-2 text-[11px] text-neutral-400">
-                  <span className="truncate">{statusMessage}</span>
+                <div className="flex items-center justify-end gap-2 text-[11px] text-neutral-400">
                   <span className="capitalize font-semibold text-neutral-300 shrink-0">{activeCatalogTab === 'home' ? 'Beranda' : activeCatalogTab === 'settings' ? 'Setelan' : activeCatalogTab}</span>
                 </div>
               </div>
