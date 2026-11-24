@@ -6,6 +6,10 @@ on:
 permissions:
   contents: write
 
+env:
+  # >>> GANTI baris ini dengan link Vercel kamu yang asli <<<
+  APP_URL: https://GANTI-NAMA-PROJECT-KAMU.vercel.app
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -21,6 +25,13 @@ jobs:
           distribution: temurin
           java-version: 21
 
+      - name: Cek APP_URL sudah diganti
+        run: |
+          echo "APP_URL = $APP_URL"
+          case "$APP_URL" in
+            *GANTI*|"https://vercel.app"|"") echo "::error::APP_URL belum diisi link Vercel yang asli (lihat baris env di atas file ini)"; exit 1 ;;
+          esac
+
       - name: Buat project Android (Capacitor)
         run: |
           mkdir cap && cd cap
@@ -30,7 +41,7 @@ jobs:
           npm install @jofr/capacitor-media-session --legacy-peer-deps || echo "::warning::Plugin kontrol media GAGAL dipasang"
           mkdir www
           echo '<!doctype html><html><head><meta charset="utf-8"><title>SpideyFy</title></head><body style="background:#0b0b10"></body></html>' > www/index.html
-          cat > capacitor.config.json <<'JSON'
+          cat > capacitor.config.json <<JSON
           {
             "appId": "app.vercel.spidefy",
             "appName": "SpideyFy",
@@ -41,7 +52,7 @@ jobs:
               "adjustMarginsForEdgeToEdge": "force"
             },
             "server": {
-              "url": "https://vercel.app",
+              "url": "$APP_URL",
               "androidScheme": "https"
             }
           }
