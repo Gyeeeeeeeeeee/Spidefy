@@ -29,6 +29,8 @@ import {
   Plus,
   Trash2,
   Check,
+  Repeat,
+  Repeat1,
 } from 'lucide-react';
 
 /**
@@ -430,6 +432,26 @@ function normalizeApiPayload(raw) {
   };
 }
 
+function RepeatButton({ mode, onClick, suit, big }) {
+  const active = mode !== 'off';
+  const Icon = mode === 'one' ? Repeat1 : Repeat;
+  const label = mode === 'off' ? 'Ulangi: mati' : mode === 'all' ? 'Ulangi semua lagu' : 'Ulangi satu lagu';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      style={active ? { color: suit.primary } : undefined}
+      className={`${big ? 'w-10 h-10' : 'p-1.5'} rounded-full flex items-center justify-center transition active:scale-90 ${
+        active ? '' : 'text-neutral-400 hover:text-white'
+      }`}
+    >
+      <Icon className={big ? 'w-6 h-6' : 'w-4 h-4'} />
+    </button>
+  );
+}
+
 function readSaved(key, fallback) {
   try {
     const raw = localStorage.getItem(key);
@@ -667,6 +689,14 @@ export default function MusicPlayer() {
     Array.isArray(SAVED_PREFS.liked) ? SAVED_PREFS.liked : ['ApXoWvfEYVU', 'Y88LVU7MAe4']
   );
   const [history, setHistory] = useState(SAVED_HISTORY);
+  const [repeatMode, setRepeatMode] = useState(
+    ['off', 'all', 'one'].includes(SAVED_PREFS.repeat) ? SAVED_PREFS.repeat : 'off'
+  );
+  const [fullLyrics, setFullLyrics] = useState(false);
+  const fullLyricsRef = useRef(null);
+  const scrubbingRef = useRef(false);
+  const repeatRef = useRef('off');
+  repeatRef.current = repeatMode;
 
   // Playback state (Audio mode uses Web Audio / synced timer fallback; Video mode uses YouTube IFrame)
   const [currentTrack, setCurrentTrack] = useState(RESTORED_TRACK || FALLBACK_CATALOG.songs[0]);
@@ -819,7 +849,7 @@ export default function MusicPlayer() {
                 ? 'Lagu ini tidak boleh diputar di luar YouTube, lanjut ke lagu berikutnya'
                 : 'Lagu gagal dimuat, lanjut ke lagu berikutnya'
             );
-            if (stepNextRef.current) stepNextRef.current();
+            if (stepNextRef.current) stepNextRef.current(true);
           },
         },
       });
@@ -849,6 +879,7 @@ export default function MusicPlayer() {
   useEffect(() => {
     if (!isPlaying) return;
     const interval = setInterval(() => {
+      if (scrubbingRef.current) return;
       if (
         ytPlayerRef.current &&
         typeof ytPlayerRef.current.getCurrentTime === 'function'
@@ -1101,7 +1132,40 @@ export default function MusicPlayer() {
     [catalog.songs, currentTrack?.id, handleSelectTrack]
   );
 
-  stepNextRef.current = () => handleStepTrack(1);
+  // Dipanggil saat lagu selesai (atau gagal dimuat)
+  const handleTrackEnded = useCallback(
+    (fromError) => {
+      const mode = repeatRef.current;
+      const pl = ytPlayerRef.current;
+      if (!fromError && mode === 'one') {
+        setCurrentTime(0);
+        if (pl && typeof pl.seekTo === 'function') pl.seekTo(0, true);
+        if (pl && typeof pl.playVideo === 'function') pl.playVideo();
+        return;
+      }
+      if (!fromError && mode === 'off') {
+        const list = queueRef.current && queueRef.current.length ? queueRef.current : catalog.songs;
+        const idx = list.findIndex((t) => t.id === currentTrack?.id);
+        if (list.length && idx === list.length - 1) {
+          // lagu terakhir dan ulangi mati: berhenti
+          isPlayingRef.current = false;
+          if (pl && typeof pl.pauseVideo === 'function') pl.pauseVideo();
+          if (pl && typeof pl.seekTo === 'function') pl.seekTo(0, true);
+          setCurrentTime(0);
+          setIsPlaying(false);
+          return;
+        }
+      }
+      handleStepTrack(1);
+    },
+    [catalog.songs, currentTrack?.id, handleStepTrack]
+  );
+
+  stepNextRef.current = (fromError) => handleTrackEnded(fromError === true);
+
+  const handleCycleRepeat = () => {
+    setRepeatMode((m) => (m === 'off' ? 'all' : m === 'all' ? 'one' : 'off'));
+  };
 
   // Kontrol layar kunci / notifikasi (Media Session)
   useEffect(() => {
@@ -1137,8 +1201,14 @@ export default function MusicPlayer() {
 
   // Simpan aktivitas: riwayat putar, suka, tema, volume, mode
   useEffect(() => {
-    writeSaved('spideyfy-prefs', { liked: likedIds, suit: suitId, volume, mode: playbackMode });
-  }, [likedIds, suitId, volume, playbackMode]);
+    writeSaved('spideyfy-prefs', {
+      liked: likedIds,
+      suit: suitId,
+      volume,
+      mode: playbackMode,
+      repeat: repeatMode,
+    });
+  }, [likedIds, suitId, volume, playbackMode, repeatMode]);
 
   useEffect(() => {
     writeSaved('spideyfy-history', history);
@@ -1241,6 +1311,54 @@ export default function MusicPlayer() {
       // abaikan
     }
   }, [isPlaying]);
+
+  // Lompat ke detik tertentu
+  const seekToSec = (sec) => {
+    setCurrentTime(sec);
+    const pl = ytPlayerRef.current;
+    if (pl && typeof pl.seekTo === 'function') pl.seekTo(sec, true);
+  };
+
+  // Geser bar durasi (layar lirik penuh)
+  const scrubFromEvent = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const sec = ratio * (duration || 0);
+    setCurrentTime(sec);
+    return sec;
+  };
+  const onScrubDown = (e) => {
+    if (!(duration > 0)) return;
+    scrubbingRef.current = true;
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // abaikan
+    }
+    scrubFromEvent(e);
+  };
+  const onScrubMove = (e) => {
+    if (!scrubbingRef.current) return;
+    scrubFromEvent(e);
+  };
+  const onScrubUp = (e) => {
+    if (!scrubbingRef.current) return;
+    const sec = scrubFromEvent(e);
+    scrubbingRef.current = false;
+    seekToSec(sec);
+  };
+
+  // Lirik penuh: baris aktif selalu di tengah layar
+  useEffect(() => {
+    if (!fullLyrics) return;
+    const box = fullLyricsRef.current;
+    const el = document.getElementById(`full-line-${activeLineIndex}`);
+    if (!box || !el) return;
+    box.scrollTo({
+      top: el.offsetTop - box.clientHeight / 2 + el.clientHeight / 2,
+      behavior: scrubbingRef.current ? 'auto' : 'smooth',
+    });
+  }, [fullLyrics, activeLineIndex]);
 
   const handleToggleLike = (trackId, e) => {
     if (e) e.stopPropagation();
@@ -1974,7 +2092,8 @@ export default function MusicPlayer() {
                   <span className="text-[11px] text-neutral-400 tabular-nums w-9">{formatDuration(duration)}</span>
                 </div>
 
-                <div className="flex items-center justify-center gap-8">
+                <div className="flex items-center justify-between px-1">
+                  <RepeatButton mode={repeatMode} onClick={handleCycleRepeat} suit={suit} big />
                   <button
                     type="button"
                     onClick={() => handleStepTrack(-1)}
@@ -2004,8 +2123,20 @@ export default function MusicPlayer() {
                   >
                     <SkipForward className="w-6 h-6" fill="currentColor" />
                   </button>
+                  <span className="w-10 h-10" aria-hidden="true" />
                 </div>
               </div>
+
+              {lyrics.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setFullLyrics(true)}
+                  className="shrink-0 self-end inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/10 text-[11px] font-bold text-white active:scale-95 transition"
+                >
+                  <Maximize2 className="w-3.5 h-3.5" />
+                  <span>Lirik layar penuh</span>
+                </button>
+              )}
 
               {/* Synced Auto-Scrolling Lyrics Panel */}
               <div
@@ -2027,16 +2158,7 @@ export default function MusicPlayer() {
                     <p
                       key={`${line.time}-${i}`}
                       ref={isActive ? activeLineRef : null}
-                      onClick={() => {
-                        setCurrentTime(line.time);
-                        if (
-                          playbackMode === 'video' &&
-                          ytPlayerRef.current &&
-                          typeof ytPlayerRef.current.seekTo === 'function'
-                        ) {
-                          ytPlayerRef.current.seekTo(line.time, true);
-                        }
-                      }}
+                      onClick={() => seekToSec(line.time)}
                       style={
                         isActive
                           ? {
@@ -2094,6 +2216,7 @@ export default function MusicPlayer() {
             {/* Center Transport & Seekbar */}
             <div className="flex flex-col items-center gap-1">
               <div className="flex items-center gap-3 sm:gap-4">
+                <RepeatButton mode={repeatMode} onClick={handleCycleRepeat} suit={suit} />
                 <button
                   type="button"
                   onClick={() => handleStepTrack(-1)}
@@ -2226,6 +2349,140 @@ export default function MusicPlayer() {
           </footer>
         </section>
       </main>
+
+      {/* Lirik layar penuh */}
+      {fullLyrics && (
+        <div
+          className="fixed inset-0 z-[55] flex flex-col"
+          style={{
+            background: `radial-gradient(circle at 50% 0%, ${suit.orbA}, #07070b 70%)`,
+            paddingTop: 'env(safe-area-inset-top, 0px)',
+          }}
+        >
+          <div className="flex items-center gap-3 px-4 pt-3 pb-2 shrink-0">
+            <img
+              src={currentTrack?.cover || FALLBACK_CATALOG.songs[0].cover}
+              alt={currentTrack?.title || 'Cover'}
+              className="w-11 h-11 rounded-lg object-cover border border-white/15 shrink-0"
+            />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-extrabold text-white truncate">{currentTrack?.title}</div>
+              <div className="text-[11px] text-neutral-400 truncate">{currentTrack?.artist}</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setFullLyrics(false)}
+              aria-label="Tutup lirik penuh"
+              className="p-2.5 rounded-full bg-white/10 text-white active:scale-90 transition"
+            >
+              <Minimize2 className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div
+            ref={fullLyricsRef}
+            className="relative flex-1 overflow-y-auto px-5 py-10 space-y-5"
+            style={{
+              maskImage: 'linear-gradient(180deg, transparent 0%, #000 10%, #000 90%, transparent 100%)',
+              WebkitMaskImage: 'linear-gradient(180deg, transparent 0%, #000 10%, #000 90%, transparent 100%)',
+            }}
+          >
+            {lyrics.length === 0 && (
+              <NoLyrics suit={suit} loading={lyricsSource === 'Searching LRCLIB...'} seed={currentTrack?.id} />
+            )}
+            {lyrics.map((line, i) => {
+              const isActive = i === activeLineIndex;
+              const isPassed = i < activeLineIndex;
+              return (
+                <p
+                  id={`full-line-${i}`}
+                  key={`full-${line.time}-${i}`}
+                  onClick={() => seekToSec(line.time)}
+                  style={
+                    isActive
+                      ? { color: '#ffffff', textShadow: `0 0 18px ${suit.glow}, 0 0 34px ${suit.glow}` }
+                      : undefined
+                  }
+                  className={`text-2xl font-extrabold leading-snug tracking-tight cursor-pointer transition-all duration-300 ${
+                    isActive
+                      ? 'opacity-100'
+                      : isPassed
+                      ? 'opacity-45 text-neutral-200'
+                      : 'opacity-30 text-neutral-300'
+                  }`}
+                >
+                  {line.text}
+                </p>
+              );
+            })}
+            <div className="h-24" />
+          </div>
+
+          <div
+            className="shrink-0 px-5 pt-3 space-y-2 bg-black/60 border-t border-white/10"
+            style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1rem)' }}
+          >
+            <div
+              role="slider"
+              aria-label="Durasi lagu"
+              onPointerDown={onScrubDown}
+              onPointerMove={onScrubMove}
+              onPointerUp={onScrubUp}
+              onPointerCancel={onScrubUp}
+              className="relative h-10 flex items-center cursor-pointer"
+              style={{ touchAction: 'none' }}
+            >
+              <div className="absolute inset-x-0 h-2 rounded-full bg-white/20" />
+              <div
+                className="absolute left-0 h-2 rounded-full bg-white"
+                style={{ width: `${progressPct}%`, boxShadow: `0 0 10px ${suit.glow}` }}
+              />
+              <div
+                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-white border-2"
+                style={{ left: `${progressPct}%`, borderColor: suit.primary }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-xs text-neutral-300 tabular-nums">
+              <span>{formatDuration(currentTime)}</span>
+              <span>{formatDuration(duration)}</span>
+            </div>
+
+            <div className="flex items-center justify-between px-1">
+              <RepeatButton mode={repeatMode} onClick={handleCycleRepeat} suit={suit} big />
+              <button
+                type="button"
+                onClick={() => handleStepTrack(-1)}
+                aria-label="Lagu sebelumnya"
+                className="w-12 h-12 rounded-full bg-white/10 text-white flex items-center justify-center active:scale-90 transition"
+              >
+                <SkipBack className="w-6 h-6" fill="currentColor" />
+              </button>
+              <button
+                type="button"
+                onClick={handleTogglePlayPause}
+                aria-label={isPlaying ? 'Pause' : 'Play'}
+                style={{ backgroundColor: suit.primary, boxShadow: `0 6px 22px ${suit.glow}` }}
+                className="w-16 h-16 rounded-full text-white flex items-center justify-center active:scale-90 transition-transform"
+              >
+                {isPlaying ? (
+                  <Pause className="w-8 h-8" fill="currentColor" />
+                ) : (
+                  <Play className="w-8 h-8 ml-1" fill="currentColor" />
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleStepTrack(1)}
+                aria-label="Lagu berikutnya"
+                className="w-12 h-12 rounded-full bg-white/10 text-white flex items-center justify-center active:scale-90 transition-transform"
+              >
+                <SkipForward className="w-6 h-6" fill="currentColor" />
+              </button>
+              <span className="w-10 h-10" aria-hidden="true" />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Pilih playlist untuk menambah lagu */}
       {pickerTrack && (
