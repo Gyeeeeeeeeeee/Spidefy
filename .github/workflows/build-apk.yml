@@ -26,7 +26,7 @@ jobs:
           mkdir cap && cd cap
           npm init -y
           npm install @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
-          npm install @anuradev/capacitor-background-mode || echo "Plugin latar belakang gagal dipasang, lanjut tanpa plugin"
+          npm install @anuradev/capacitor-background-mode
           mkdir www
           echo '<!doctype html><html><head><meta charset="utf-8"><title>SpideyFy</title></head><body style="background:#0b0b10"></body></html>' > www/index.html
           cat > capacitor.config.json <<'JSON'
@@ -46,11 +46,66 @@ jobs:
           }
           JSON
           npx cap add android
-          sed -i 's#</manifest>#    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n</manifest>#' android/app/src/main/AndroidManifest.xml
+          sed -i 's#</manifest>#    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />\n</manifest>#' android/app/src/main/AndroidManifest.xml
           npx cap sync android
           # Layar penuh tapi tidak menimpa status bar / tombol navigasi: latar gelap + ikon status terang
           STYLES=android/app/src/main/res/values/styles.xml
           sed -i 's#<item name="windowNoTitle">true</item>#<item name="windowNoTitle">true</item>\n        <item name="android:windowBackground">\#0b0b10</item>\n        <item name="android:windowLightStatusBar">false</item>#' "$STYLES"
+
+          # Jaga WebView tetap hidup saat app ke latar belakang / layar mati (supaya musik tidak dijeda)
+          MA=$(find android/app/src/main/java -name MainActivity.java | head -1)
+          PKG=$(grep -m1 '^package ' "$MA" | sed 's/package \(.*\);/\1/')
+          cat > "$MA" <<JAVA
+          package $PKG;
+
+          import android.view.View;
+          import android.webkit.WebView;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+            private void keepAwake() {
+              try {
+                if (getBridge() == null) return;
+                WebView w = getBridge().getWebView();
+                if (w == null) return;
+                w.onResume();
+                w.resumeTimers();
+                w.dispatchWindowVisibilityChanged(View.VISIBLE);
+              } catch (Exception e) {
+                // abaikan
+              }
+            }
+
+            private void keepAwakeRepeatedly() {
+              keepAwake();
+              try {
+                final WebView w = getBridge().getWebView();
+                for (int i = 1; i <= 8; i++) {
+                  w.postDelayed(new Runnable() {
+                    @Override
+                    public void run() { keepAwake(); }
+                  }, i * 700L);
+                }
+              } catch (Exception e) {
+                // abaikan
+              }
+            }
+
+            @Override
+            public void onPause() {
+              super.onPause();
+              keepAwakeRepeatedly();
+            }
+
+            @Override
+            public void onStop() {
+              super.onStop();
+              keepAwakeRepeatedly();
+            }
+          }
+          JAVA
+          echo "=== Manifest plugin latar belakang (untuk cek) ==="
+          cat node_modules/@anuradev/capacitor-background-mode/android/src/main/AndroidManifest.xml || true
 
       - name: Pasang ikon aplikasi
         run: |
