@@ -27,6 +27,7 @@ jobs:
           npm init -y
           npm install @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
           npm install @anuradev/capacitor-background-mode --legacy-peer-deps || echo "::warning::Plugin latar belakang GAGAL dipasang"
+          npm install @jofr/capacitor-media-session --legacy-peer-deps || echo "::warning::Plugin kontrol media GAGAL dipasang"
           mkdir www
           echo '<!doctype html><html><head><meta charset="utf-8"><title>SpideyFy</title></head><body style="background:#0b0b10"></body></html>' > www/index.html
           cat > capacitor.config.json <<'JSON'
