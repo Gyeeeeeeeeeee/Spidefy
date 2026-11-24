@@ -26,7 +26,7 @@ jobs:
           mkdir cap && cd cap
           npm init -y
           npm install @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
-          npm install @anuradev/capacitor-background-mode
+          npm install @anuradev/capacitor-background-mode --legacy-peer-deps || echo "::warning::Plugin latar belakang GAGAL dipasang"
           mkdir www
           echo '<!doctype html><html><head><meta charset="utf-8"><title>SpideyFy</title></head><body style="background:#0b0b10"></body></html>' > www/index.html
           cat > capacitor.config.json <<'JSON'
@@ -54,6 +54,7 @@ jobs:
 
           # Jaga WebView tetap hidup saat app ke latar belakang / layar mati (supaya musik tidak dijeda)
           MA=$(find android/app/src/main/java -name MainActivity.java | head -1)
+          if [ -n "$MA" ]; then
           PKG=$(grep -m1 '^package ' "$MA" | sed 's/package \(.*\);/\1/')
           cat > "$MA" <<JAVA
           package $PKG;
@@ -104,8 +105,9 @@ jobs:
             }
           }
           JAVA
+          fi
           echo "=== Manifest plugin latar belakang (untuk cek) ==="
-          cat node_modules/@anuradev/capacitor-background-mode/android/src/main/AndroidManifest.xml || true
+          cat node_modules/@anuradev/capacitor-background-mode/android/src/main/AndroidManifest.xml || echo "plugin tidak ditemukan"
 
       - name: Pasang ikon aplikasi
         run: |
