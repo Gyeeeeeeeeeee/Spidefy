@@ -652,6 +652,7 @@ function askBackgroundPermission() {
   (async () => {
     await call('requestNotificationsPermission');
     await call('requestForegroundPermission');
+    await call('requestDisableBatteryOptimizations');
     await call('disableBatteryOptimizations');
   })();
   return true;
@@ -1333,7 +1334,6 @@ export default function MusicPlayer() {
         run('requestForegroundPermission');
         run('enable', { title: 'SpideyFy', text: 'Musik sedang diputar', channelName: 'SpideyFy Player' });
         run('disableWebViewOptimizations');
-        run('disableBatteryOptimizations');
       } else {
         run('enableWebViewOptimizations');
         run('disable');
