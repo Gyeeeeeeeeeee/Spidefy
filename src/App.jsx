@@ -25,6 +25,10 @@ import {
   Clock,
   Home,
   Settings,
+  ListPlus,
+  Plus,
+  Trash2,
+  Check,
 } from 'lucide-react';
 
 /**
@@ -426,6 +430,20 @@ function normalizeApiPayload(raw) {
   };
 }
 
+function slimTrack(t) {
+  return {
+    id: t.id,
+    videoId: t.videoId,
+    title: t.title,
+    artist: t.artist,
+    album: t.album,
+    durationSec: t.durationSec,
+    durationLabel: t.durationLabel,
+    cover: t.cover,
+    lyrics: null,
+  };
+}
+
 function SpiderIcon({ size = 18, color = '#fff' }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
@@ -628,6 +646,21 @@ export default function MusicPlayer() {
   const [volume, setVolume] = useState(80);
   const [isMuted, setIsMuted] = useState(false);
 
+  // Playlist buatan sendiri (tersimpan di HP)
+  const [userPlaylists, setUserPlaylists] = useState(() => {
+    try {
+      const raw = localStorage.getItem('spideyfy-playlists');
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const [pickerTrack, setPickerTrack] = useState(null);
+  const [newPlaylistName, setNewPlaylistName] = useState('');
+  const [openPlaylistId, setOpenPlaylistId] = useState(null);
+  const queueRef = useRef(null);
+
   // Synced lyrics state
   const [lyrics, setLyrics] = useState(FALLBACK_CATALOG.songs[0].lyrics);
   const [lyricsSource, setLyricsSource] = useState('Synced Lyrics');
@@ -727,7 +760,12 @@ export default function MusicPlayer() {
             if (ev.data === window.YT.PlayerState.PLAYING) {
               setIsPlaying(true);
             } else if (ev.data === window.YT.PlayerState.PAUSED) {
-              setIsPlaying(false);
+              if (document.hidden && isPlayingRef.current) {
+                // Sistem menjeda saat aplikasi di latar belakang: lanjutkan lagi
+                try { ev.target.playVideo(); } catch { /* abaikan */ }
+              } else {
+                setIsPlaying(false);
+              }
             } else if (ev.data === window.YT.PlayerState.ENDED) {
               if (stepNextRef.current) stepNextRef.current();
             }
@@ -982,8 +1020,9 @@ export default function MusicPlayer() {
     }
   }, [currentTrack, loadLyricsForTrack]);
 
-  const handleSelectTrack = useCallback((track, autoPlay = true) => {
+  const handleSelectTrack = useCallback((track, autoPlay = true, queue = null) => {
     if (!track) return;
+    queueRef.current = queue;
     if (currentTrack && track.id === currentTrack.id) {
       setMobilePane('lyrics');
       return;
@@ -999,6 +1038,7 @@ export default function MusicPlayer() {
 
   const handleTogglePlayPause = useCallback(() => {
     const next = !isPlayingRef.current;
+    isPlayingRef.current = next;
     const pl = ytPlayerRef.current;
     if (pl) {
       if (next && typeof pl.playVideo === 'function') pl.playVideo();
@@ -1009,11 +1049,11 @@ export default function MusicPlayer() {
 
   const handleStepTrack = useCallback(
     (delta) => {
-      const list = catalog.songs;
+      const list = queueRef.current && queueRef.current.length ? queueRef.current : catalog.songs;
       if (!list.length) return;
       const idx = list.findIndex((t) => t.id === currentTrack?.id);
       const nextIdx = idx === -1 ? 0 : (idx + delta + list.length) % list.length;
-      handleSelectTrack(list[nextIdx], true);
+      handleSelectTrack(list[nextIdx], true, queueRef.current);
     },
     [catalog.songs, currentTrack?.id, handleSelectTrack]
   );
@@ -1042,8 +1082,8 @@ export default function MusicPlayer() {
   }, [currentTrack, isPlaying, handleTogglePlayPause, handleStepTrack]);
 
   const handleSeek = (e) => {
-    if (!seekBarRef.current || duration <= 0) return;
-    const rect = seekBarRef.current.getBoundingClientRect();
+    if (!e.currentTarget || duration <= 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const targetSec = ratio * duration;
     setCurrentTime(targetSec);
@@ -1051,6 +1091,70 @@ export default function MusicPlayer() {
       ytPlayerRef.current.seekTo(targetSec, true);
     }
   };
+
+  // Simpan playlist ke HP
+  useEffect(() => {
+    try {
+      localStorage.setItem('spideyfy-playlists', JSON.stringify(userPlaylists));
+    } catch {
+      // penyimpanan tidak tersedia
+    }
+  }, [userPlaylists]);
+
+  const createPlaylist = (name, track) => {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return;
+    const pl = { id: `up-${Date.now()}`, name: trimmed, tracks: track ? [slimTrack(track)] : [] };
+    setUserPlaylists((prev) => [...prev, pl]);
+    setNewPlaylistName('');
+  };
+
+  const toggleTrackInPlaylist = (plId, track) => {
+    setUserPlaylists((prev) =>
+      prev.map((pl) => {
+        if (pl.id !== plId) return pl;
+        const has = pl.tracks.some((t) => t.id === track.id);
+        return {
+          ...pl,
+          tracks: has ? pl.tracks.filter((t) => t.id !== track.id) : [...pl.tracks, slimTrack(track)],
+        };
+      })
+    );
+  };
+
+  const deletePlaylist = (plId) => {
+    setUserPlaylists((prev) => prev.filter((pl) => pl.id !== plId));
+    setOpenPlaylistId((cur) => (cur === plId ? null : cur));
+  };
+
+  const playUserPlaylist = (pl, startTrack) => {
+    if (!pl.tracks.length) return;
+    handleSelectTrack(startTrack || pl.tracks[0], true, pl.tracks);
+  };
+
+  // Musik tetap jalan di latar belakang (aplikasi Android)
+  useEffect(() => {
+    try {
+      const bg = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BackgroundMode;
+      if (!bg) return;
+      const run = (fn) => {
+        try {
+          const r = fn && fn.call(bg);
+          if (r && typeof r.catch === 'function') r.catch(() => {});
+        } catch {
+          // abaikan
+        }
+      };
+      if (isPlaying) {
+        run(bg.enable);
+        run(bg.disableWebViewOptimizations);
+      } else {
+        run(bg.disable);
+      }
+    } catch {
+      // abaikan
+    }
+  }, [isPlaying]);
 
   const handleToggleLike = (trackId, e) => {
     if (e) e.stopPropagation();
@@ -1454,6 +1558,18 @@ export default function MusicPlayer() {
 
                         <button
                           type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPickerTrack(track);
+                          }}
+                          aria-label="Tambah ke playlist"
+                          className="p-1.5 rounded-full text-neutral-500 hover:text-white transition active:scale-90"
+                        >
+                          <ListPlus className="w-4 h-4" />
+                        </button>
+
+                        <button
+                          type="button"
                           onClick={(e) => handleToggleLike(track.id, e)}
                           aria-label="Like song"
                           className={`p-1.5 rounded-full transition active:scale-90 ${
@@ -1528,6 +1644,97 @@ export default function MusicPlayer() {
 
                 {activeCatalogTab === 'playlists' && (
                   <div className="space-y-2">
+                    <div className="text-xs font-extrabold text-white pt-1">Playlist Saya</div>
+                    <div className="flex gap-2">
+                      <input
+                        value={newPlaylistName}
+                        onChange={(e) => setNewPlaylistName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') createPlaylist(newPlaylistName);
+                        }}
+                        placeholder="Nama playlist baru"
+                        className="flex-1 min-w-0 px-3 py-2 rounded-xl bg-black/50 border border-white/15 text-sm text-white outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => createPlaylist(newPlaylistName)}
+                        style={{ backgroundColor: suit.primary }}
+                        className="px-3 py-2 rounded-xl text-sm font-bold text-white inline-flex items-center gap-1 active:scale-95"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>Buat</span>
+                      </button>
+                    </div>
+                    {userPlaylists.length === 0 && (
+                      <p className="text-[11px] text-neutral-400 px-1">
+                        Belum ada playlist. Buat di atas, lalu tekan tombol + di lagu untuk menambahkannya.
+                      </p>
+                    )}
+                    {userPlaylists.map((pl) => (
+                      <div key={pl.id} className="rounded-xl bg-white/[0.04] border border-white/[0.08] overflow-hidden">
+                        <div className="p-3 flex items-center gap-2.5">
+                          <div
+                            className="min-w-0 flex-1 cursor-pointer"
+                            onClick={() => setOpenPlaylistId(openPlaylistId === pl.id ? null : pl.id)}
+                          >
+                            <div className="text-xs font-bold text-white truncate">{pl.name}</div>
+                            <div className="text-[11px] text-neutral-400 mt-0.5">{pl.tracks.length} lagu</div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => playUserPlaylist(pl)}
+                            style={{ backgroundColor: suit.primary }}
+                            className="px-3 py-1.5 rounded-full text-[11px] font-bold text-white shrink-0 active:scale-95"
+                          >
+                            Play
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (window.confirm(`Hapus playlist "${pl.name}"?`)) deletePlaylist(pl.id);
+                            }}
+                            aria-label="Hapus playlist"
+                            className="p-1.5 rounded-full text-neutral-400 hover:text-white shrink-0"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                        {openPlaylistId === pl.id && (
+                          <div className="px-2 pb-2 space-y-1">
+                            {pl.tracks.length === 0 && (
+                              <p className="text-[11px] text-neutral-400 px-2 pb-1">
+                                Masih kosong. Tekan tombol + di lagu untuk menambahkan.
+                              </p>
+                            )}
+                            {pl.tracks.map((t) => (
+                              <div
+                                key={t.id}
+                                onClick={() => playUserPlaylist(pl, t)}
+                                className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg bg-white/[0.04] cursor-pointer active:scale-[0.99]"
+                              >
+                                <img src={t.cover} alt={t.title} className="w-9 h-9 rounded-md object-cover shrink-0" />
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-xs font-bold text-white truncate">{t.title}</div>
+                                  <div className="text-[10.5px] text-neutral-400 truncate">{t.artist}</div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleTrackInPlaylist(pl.id, t);
+                                  }}
+                                  aria-label="Hapus dari playlist"
+                                  className="p-1.5 rounded-full text-neutral-400 hover:text-white"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    <div className="text-xs font-extrabold text-white pt-3">Playlist YouTube Music</div>
                     {catalog.playlists.map((pl) => (
                       <div
                         key={pl.id}
@@ -1591,7 +1798,7 @@ export default function MusicPlayer() {
                 <div ref={ytContainerRef} className="w-full h-full" />
               </div>
               {playbackMode !== 'video' && (
-                <div className="flex items-center gap-3.5 p-3 rounded-2xl bg-black/40 border border-white/10 shrink-0">
+                <div className="hidden lg:flex items-center gap-3.5 p-3 rounded-2xl bg-black/40 border border-white/10 shrink-0">
                   <img
                     src={currentTrack?.cover || FALLBACK_CATALOG.songs[0].cover}
                     alt={currentTrack?.title || 'Cover'}
@@ -1614,6 +1821,104 @@ export default function MusicPlayer() {
                   </div>
                 </div>
               )}
+
+              {/* Panel pemutar besar (HP) */}
+              <div className="lg:hidden shrink-0 rounded-2xl bg-black/45 border border-white/10 p-3.5 space-y-2.5">
+                <div className="flex items-center gap-3">
+                  <img
+                    src={currentTrack?.cover || FALLBACK_CATALOG.songs[0].cover}
+                    alt={currentTrack?.title || 'Cover'}
+                    className="w-20 h-20 rounded-xl object-cover shrink-0 border border-white/15 shadow-lg"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <h2 className="text-base font-extrabold text-white truncate">
+                      {currentTrack?.title || 'Select a Track'}
+                    </h2>
+                    <p className="text-xs text-neutral-400 truncate">{currentTrack?.artist || 'SpideyFy'}</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={(e) => currentTrack && handleToggleLike(currentTrack.id, e)}
+                      aria-label="Suka"
+                      className={`p-2.5 rounded-full bg-white/10 active:scale-90 transition ${
+                        isCurrentLiked ? 'text-rose-500' : 'text-neutral-200'
+                      }`}
+                    >
+                      <Heart className="w-5 h-5" fill={isCurrentLiked ? 'currentColor' : 'none'} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => currentTrack && setPickerTrack(currentTrack)}
+                      aria-label="Tambah ke playlist"
+                      className="p-2.5 rounded-full bg-white/10 text-neutral-200 active:scale-90 transition"
+                    >
+                      <ListPlus className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2.5">
+                  <span className="text-[11px] text-neutral-400 tabular-nums w-9 text-right">
+                    {formatDuration(currentTime)}
+                  </span>
+                  <div
+                    onClick={handleSeek}
+                    role="slider"
+                    aria-label="Playback progress"
+                    className="relative flex-1 h-9 flex items-center cursor-pointer"
+                  >
+                    <div className="absolute inset-x-0 h-1.5 rounded-full bg-white/20" />
+                    <div
+                      className="absolute left-0 h-1.5 rounded-full"
+                      style={{
+                        width: `${progressPct}%`,
+                        background: `linear-gradient(90deg, ${suit.secondary}, ${suit.primary})`,
+                        boxShadow: `0 0 8px ${suit.glow}`,
+                      }}
+                    />
+                    <div
+                      className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2"
+                      style={{ left: `${progressPct}%` }}
+                    >
+                      <SpiderIcon size={24} color={suit.primary} />
+                    </div>
+                  </div>
+                  <span className="text-[11px] text-neutral-400 tabular-nums w-9">{formatDuration(duration)}</span>
+                </div>
+
+                <div className="flex items-center justify-center gap-8">
+                  <button
+                    type="button"
+                    onClick={() => handleStepTrack(-1)}
+                    aria-label="Lagu sebelumnya"
+                    className="w-12 h-12 rounded-full bg-white/10 text-white flex items-center justify-center active:scale-90 transition"
+                  >
+                    <SkipBack className="w-6 h-6" fill="currentColor" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleTogglePlayPause}
+                    aria-label={isPlaying ? 'Pause' : 'Play'}
+                    style={{ backgroundColor: suit.primary, boxShadow: `0 6px 22px ${suit.glow}` }}
+                    className="w-16 h-16 rounded-full text-white flex items-center justify-center active:scale-90 transition-transform"
+                  >
+                    {isPlaying ? (
+                      <Pause className="w-8 h-8" fill="currentColor" />
+                    ) : (
+                      <Play className="w-8 h-8 ml-1" fill="currentColor" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleStepTrack(1)}
+                    aria-label="Lagu berikutnya"
+                    className="w-12 h-12 rounded-full bg-white/10 text-white flex items-center justify-center active:scale-90 transition-transform"
+                  >
+                    <SkipForward className="w-6 h-6" fill="currentColor" />
+                  </button>
+                </div>
+              </div>
 
               {/* Synced Auto-Scrolling Lyrics Panel */}
               <div
@@ -1671,7 +1976,7 @@ export default function MusicPlayer() {
           </div>
 
           {/* Bottom Player Bar: Track Info | Controls & Seekbar | Audio/Video Toggle & Volume */}
-          <footer className="px-3.5 sm:px-5 py-2.5 bg-black/85 border-t border-white/[0.09] grid grid-cols-[1fr_auto] md:grid-cols-[1fr_1.45fr_1fr] items-center gap-3 shrink-0">
+          <footer className={`${mobilePane === 'lyrics' ? 'max-lg:hidden ' : ''}px-3.5 sm:px-5 py-2.5 bg-black/85 border-t border-white/[0.09] grid grid-cols-[1fr_auto] md:grid-cols-[1fr_1.45fr_1fr] items-center gap-3 shrink-0`}>
             {/* Track Info (tap untuk buka lagu dan lirik) */}
             <div className="flex items-center gap-2.5 min-w-0 cursor-pointer" onClick={() => setMobilePane('lyrics')}>
               <img
@@ -1834,6 +2139,70 @@ export default function MusicPlayer() {
           </footer>
         </section>
       </main>
+
+      {/* Pilih playlist untuk menambah lagu */}
+      {pickerTrack && (
+        <div
+          className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/70"
+          onClick={() => setPickerTrack(null)}
+        >
+          <div
+            className="w-full sm:max-w-sm max-h-[80dvh] overflow-y-auto rounded-t-3xl sm:rounded-3xl bg-[#14141b] border border-white/15 p-4 space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-extrabold text-white">Tambah ke playlist</div>
+                <div className="text-[11px] text-neutral-400 truncate">{pickerTrack.title}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPickerTrack(null)}
+                aria-label="Tutup"
+                className="p-2 rounded-full bg-white/10 text-white shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex gap-2">
+              <input
+                value={newPlaylistName}
+                onChange={(e) => setNewPlaylistName(e.target.value)}
+                placeholder="Nama playlist baru"
+                className="flex-1 min-w-0 px-3 py-2 rounded-xl bg-black/50 border border-white/15 text-sm text-white outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => createPlaylist(newPlaylistName, pickerTrack)}
+                style={{ backgroundColor: suit.primary }}
+                className="px-3.5 py-2 rounded-xl text-sm font-bold text-white active:scale-95"
+              >
+                Buat
+              </button>
+            </div>
+            {userPlaylists.length === 0 && (
+              <p className="text-[11px] text-neutral-400">Belum ada playlist. Buat satu di atas.</p>
+            )}
+            {userPlaylists.map((pl) => {
+              const has = pl.tracks.some((t) => t.id === pickerTrack.id);
+              return (
+                <button
+                  key={pl.id}
+                  type="button"
+                  onClick={() => toggleTrackInPlaylist(pl.id, pickerTrack)}
+                  className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-white/[0.05] active:scale-[0.99] text-left"
+                >
+                  <span className="min-w-0">
+                    <span className="block text-sm font-bold text-white truncate">{pl.name}</span>
+                    <span className="block text-[11px] text-neutral-400">{pl.tracks.length} lagu</span>
+                  </span>
+                  {has && <Check className="w-5 h-5 shrink-0" style={{ color: suit.primary }} />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Navigasi bawah (HP) */}
       <nav aria-label="Navigasi" className="lg:hidden fixed bottom-0 inset-x-0 z-30 h-14 flex items-stretch bg-[#0b0b10]/95 backdrop-blur-xl border-t border-white/10">
