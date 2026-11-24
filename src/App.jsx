@@ -34,7 +34,15 @@ import {
   Repeat,
   Repeat1,
 } from 'lucide-react';
+  Repeat,
+  Repeat1,
+} from 'lucide-react';
 
+// <--- TEMPELKAN KODE BAGIAN A DI SINI --->
+
+const SUITS = {
+  classic: {
+    
 /**
  * Spider-Verse Suit Theme Definitions
  * Controls accent colors, glow shadows, and ambient backdrop gradients.
@@ -856,19 +864,15 @@ export default function MusicPlayer() {
             if (d > 0) setDuration(d);
             if (isPlayingRef.current) ev.target.playVideo();
           },
-          onStateChange: (ev) => {
-            if (ev.data === window.YT.PlayerState.PLAYING) {
-              setIsPlaying(true);
-            } else if (ev.data === window.YT.PlayerState.PAUSED) {
-              if (document.hidden && isPlayingRef.current) {
-                // Sistem menjeda saat aplikasi di latar belakang: lanjutkan lagi
-                try { ev.target.playVideo(); } catch { /* abaikan */ }
-              } else {
-                setIsPlaying(false);
-              }
-            } else if (ev.data === window.YT.PlayerState.ENDED) {
-              if (stepNextRef.current) stepNextRef.current();
-            }
+            onReady: (ev) => {
+            ev.target.setVolume(volumeRef.current);
+            resumeSecRef.current = 0;
+            const d = ev.target.getDuration();
+            if (d > 0) setDuration(d);
+            if (isPlayingRef.current) ev.target.playVideo();
+          },
+          // <--- GANTI BLOK onStateChange YANG LAMA DENGAN KODE BAGIAN B DI SINI --->
+          onError: (ev) => {
           },
           onError: (ev) => {
             const blocked = ev.data === 101 || ev.data === 150;
