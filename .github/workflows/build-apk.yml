@@ -8,7 +8,7 @@ permissions:
 
 env:
   # >>> GANTI baris ini dengan link Vercel kamu yang asli <<<
-  APP_URL: https://GANTI-NAMA-PROJECT-KAMU.vercel.app
+  APP_URL: https://spidefy.vercel.app
 
 jobs:
   build:
