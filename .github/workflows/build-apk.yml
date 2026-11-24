@@ -35,6 +35,10 @@ jobs:
             "appName": "SpideyFy",
             "webDir": "www",
             "backgroundColor": "#0b0b10",
+            "android": {
+              "backgroundColor": "#0b0b10",
+              "adjustMarginsForEdgeToEdge": "force"
+            },
             "server": {
               "url": "https://spidefy.vercel.app",
               "androidScheme": "https"
@@ -44,6 +48,9 @@ jobs:
           npx cap add android
           sed -i 's#</manifest>#    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n</manifest>#' android/app/src/main/AndroidManifest.xml
           npx cap sync android
+          # Layar penuh tapi tidak menimpa status bar / tombol navigasi: latar gelap + ikon status terang
+          STYLES=android/app/src/main/res/values/styles.xml
+          sed -i 's#<item name="windowNoTitle">true</item>#<item name="windowNoTitle">true</item>\n        <item name="android:windowBackground">\#0b0b10</item>\n        <item name="android:windowLightStatusBar">false</item>#' "$STYLES"
 
       - name: Pasang ikon aplikasi
         run: |
@@ -51,7 +58,7 @@ jobs:
           rm -rf mipmap-anydpi-v26
           for d in mipmap-mdpi mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
             cp "$GITHUB_WORKSPACE/public/icon-512.png" "$d/ic_launcher.png"
-            cp "$GITHUB_WORKSPACE/public/icon-512.png" "$d/ic_launcher_round.png"
+            cp "$GITHUB_WORKSPACE/public/icon-round-512.png" "$d/ic_launcher_round.png"
             cp "$GITHUB_WORKSPACE/public/icon-512.png" "$d/ic_launcher_foreground.png"
           done
 
