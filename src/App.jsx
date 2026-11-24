@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { MediaSession } from '@jofr/capacitor-media-session';
 import {
   Search,
   Heart,
@@ -1194,26 +1195,51 @@ export default function MusicPlayer() {
     setRepeatMode((m) => (m === 'off' ? 'all' : m === 'all' ? 'one' : 'off'));
   };
 
-  // Kontrol layar kunci / notifikasi (Media Session)
+  // Kontrol layar kunci / notifikasi ala Spotify (Media Session)
+  const timeRef = useRef(0);
+  timeRef.current = currentTime;
   useEffect(() => {
-    if (!('mediaSession' in navigator) || !currentTrack) return;
-    const ms = navigator.mediaSession;
-    ms.metadata = new window.MediaMetadata({
-      title: currentTrack.title,
-      artist: currentTrack.artist,
-      album: currentTrack.album || '',
-      artwork: [{ src: currentTrack.cover, sizes: '480x360', type: 'image/jpeg' }],
-    });
-    ms.playbackState = isPlaying ? 'playing' : 'paused';
-    try {
-      ms.setActionHandler('play', () => { if (!isPlayingRef.current) handleTogglePlayPause(); });
-      ms.setActionHandler('pause', () => { if (isPlayingRef.current) handleTogglePlayPause(); });
-      ms.setActionHandler('nexttrack', () => handleStepTrack(1));
-      ms.setActionHandler('previoustrack', () => handleStepTrack(-1));
-    } catch {
-      // browser tidak mendukung salah satu aksi
-    }
-  }, [currentTrack, isPlaying, handleTogglePlayPause, handleStepTrack]);
+    if (!currentTrack) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        await MediaSession.setMetadata({
+          title: currentTrack.title || '',
+          artist: currentTrack.artist || '',
+          album: currentTrack.album || '',
+          artwork: currentTrack.cover ? [{ src: currentTrack.cover, sizes: '512x512', type: 'image/jpeg' }] : [],
+        });
+        if (cancelled) return;
+        await MediaSession.setActionHandler({ action: 'play' }, () => {
+          if (!isPlayingRef.current) handleTogglePlayPause();
+        });
+        await MediaSession.setActionHandler({ action: 'pause' }, () => {
+          if (isPlayingRef.current) handleTogglePlayPause();
+        });
+        await MediaSession.setActionHandler({ action: 'nexttrack' }, () => handleStepTrack(1));
+        await MediaSession.setActionHandler({ action: 'previoustrack' }, () => handleStepTrack(-1));
+        await MediaSession.setActionHandler({ action: 'seekto' }, (d) => {
+          if (d && d.seekTime != null && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+            ytPlayerRef.current.seekTo(d.seekTime, true);
+            setCurrentTime(d.seekTime);
+          }
+        });
+        await MediaSession.setPlaybackState({ playbackState: isPlaying ? 'playing' : 'paused' });
+        if (duration > 0) {
+          await MediaSession.setPositionState({
+            duration,
+            position: Math.max(0, Math.min(duration, timeRef.current || 0)),
+            playbackRate: 1,
+          });
+        }
+      } catch {
+        // plugin / browser tidak mendukung, abaikan
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentTrack, isPlaying, duration, handleTogglePlayPause, handleStepTrack]);
 
   const handleSeek = (e) => {
     if (!e.currentTarget || duration <= 0) return;
