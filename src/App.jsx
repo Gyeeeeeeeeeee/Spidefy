@@ -2363,7 +2363,8 @@ export default function MusicPlayer() {
             bottom: 0,
             height: '100dvh',
             zIndex: 55,
-            background: `radial-gradient(circle at 50% 0%, ${suit.orbA}, #07070b 70%)`,
+            backgroundColor: '#07070b',
+            backgroundImage: `radial-gradient(circle at 50% 0%, ${suit.orbA}, transparent 70%)`,
             paddingTop: 'env(safe-area-inset-top, 0px)',
           }}
         >
