@@ -639,6 +639,24 @@ function NoLyrics({ suit, loading, seed }) {
   );
 }
 
+function askBackgroundPermission() {
+  const bg = typeof window !== 'undefined' && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BackgroundMode;
+  if (!bg) return false;
+  const call = async (name) => {
+    try {
+      if (typeof bg[name] === 'function') await bg[name]();
+    } catch {
+      // abaikan
+    }
+  };
+  (async () => {
+    await call('requestNotificationsPermission');
+    await call('requestForegroundPermission');
+    await call('disableBatteryOptimizations');
+  })();
+  return true;
+}
+
 function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, backendConnected }) {
   return (
     <div className="space-y-4 pb-4">
@@ -662,6 +680,13 @@ function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, 
             </button>
           ))}
         </div>
+      </div>
+      <div>
+        <h3 className="text-sm font-black italic text-white mb-2">Latar belakang</h3>
+        <button type="button" onClick={() => askBackgroundPermission()} className="w-full rounded-xl py-2.5 text-xs font-bold text-white active:scale-95 transition" style={{ background: suit.primary }}>
+          Izinkan musik di latar belakang
+        </button>
+        <p className="text-[11px] text-neutral-400 mt-1.5">Kalau musik berhenti saat layar mati: izinkan notifikasi, lalu pilih izinkan / "Tanpa batasan" pada penghematan baterai.</p>
       </div>
       <div className="rounded-xl bg-white/[0.05] p-3 text-[11px] text-neutral-300 space-y-1">
         <div className="font-bold text-white">Status</div>
@@ -1317,6 +1342,22 @@ export default function MusicPlayer() {
       // abaikan
     }
   }, [isPlaying]);
+
+  // Minta izin latar belakang sekali saat pertama dibuka (aplikasi Android)
+  useEffect(() => {
+    let timer;
+    try {
+      if (localStorage.getItem('spideyfy-bg-asked')) return undefined;
+      timer = setTimeout(() => {
+        if (askBackgroundPermission()) {
+          try { localStorage.setItem('spideyfy-bg-asked', '1'); } catch { /* abaikan */ }
+        }
+      }, 2500);
+    } catch {
+      // abaikan
+    }
+    return () => clearTimeout(timer);
+  }, []);
 
   // Lompat ke detik tertentu
   const seekToSec = (sec) => {
