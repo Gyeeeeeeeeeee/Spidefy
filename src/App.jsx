@@ -430,6 +430,31 @@ function normalizeApiPayload(raw) {
   };
 }
 
+function readSaved(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeSaved(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // penyimpanan tidak tersedia
+  }
+}
+
+const SAVED_LAST = readSaved('spideyfy-last', null);
+const SAVED_PREFS = readSaved('spideyfy-prefs', null) || {};
+const SAVED_HISTORY_RAW = readSaved('spideyfy-history', []);
+const SAVED_HISTORY = Array.isArray(SAVED_HISTORY_RAW) ? SAVED_HISTORY_RAW.filter((x) => x && x.videoId) : [];
+const RESTORED_TRACK =
+  SAVED_LAST && SAVED_LAST.track && SAVED_LAST.track.videoId ? SAVED_LAST.track : null;
+const RESTORED_TIME = RESTORED_TRACK ? Number(SAVED_LAST.time) || 0 : 0;
+
 function slimTrack(t) {
   return {
     id: t.id,
@@ -465,11 +490,14 @@ function WebCorner({ color }) {
 
 const BURST = 'polygon(50% 0, 62% 20%, 85% 12%, 80% 36%, 100% 50%, 80% 64%, 85% 88%, 62% 80%, 50% 100%, 38% 80%, 15% 88%, 20% 64%, 0 50%, 20% 36%, 15% 12%, 38% 20%)';
 
-function HomeView({ songs, currentTrack, isPlaying, suit, onPlay }) {
+function HomeView({ songs, currentTrack, isPlaying, suit, onPlay, history = [] }) {
   const h = new Date().getHours();
   const greet = h < 11 ? 'Selamat pagi' : h < 15 ? 'Selamat siang' : h < 18 ? 'Selamat sore' : 'Selamat malam';
   const quick = songs.slice(0, 6);
-  const cont = [currentTrack, ...songs.filter((x) => x.id !== currentTrack?.id)].filter(Boolean).slice(0, 8);
+  const cont = [
+    ...history,
+    ...songs.filter((x) => !history.some((h) => h.id === x.id)),
+  ].filter(Boolean).slice(0, 12);
   const top = songs.slice(0, 10);
   const first = top[0];
   const outline = { WebkitTextStroke: `1px ${suit.primary}`, color: 'transparent' };
@@ -623,7 +651,7 @@ function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, 
 
 export default function MusicPlayer() {
   // Suit & macOS window state
-  const [suitId, setSuitId] = useState('classic');
+  const [suitId, setSuitId] = useState(SAVED_PREFS.suit || 'classic');
   const [windowMode, setWindowMode] = useState('normal'); // 'normal' | 'fullscreen' | 'minimized' | 'closed'
   const [activeCatalogTab, setActiveCatalogTab] = useState('home'); // 'home' | 'songs' | 'albums' | 'artists' | 'playlists'
   const [mobilePane, setMobilePane] = useState('catalog'); // 'catalog' | 'lyrics'
@@ -635,15 +663,22 @@ export default function MusicPlayer() {
   const [backendConnected, setBackendConnected] = useState(false);
   const [isLoadingCatalog, setIsLoadingCatalog] = useState(false);
   const [statusMessage, setStatusMessage] = useState('Siap dengan katalog bawaan (otomatis terhubung ke /api/ytmusic)');
-  const [likedIds, setLikedIds] = useState(['ApXoWvfEYVU', 'Y88LVU7MAe4']);
+  const [likedIds, setLikedIds] = useState(
+    Array.isArray(SAVED_PREFS.liked) ? SAVED_PREFS.liked : ['ApXoWvfEYVU', 'Y88LVU7MAe4']
+  );
+  const [history, setHistory] = useState(SAVED_HISTORY);
 
   // Playback state (Audio mode uses Web Audio / synced timer fallback; Video mode uses YouTube IFrame)
-  const [currentTrack, setCurrentTrack] = useState(FALLBACK_CATALOG.songs[0]);
+  const [currentTrack, setCurrentTrack] = useState(RESTORED_TRACK || FALLBACK_CATALOG.songs[0]);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [playbackMode, setPlaybackMode] = useState('audio'); // 'audio' | 'video'
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(FALLBACK_CATALOG.songs[0].durationSec);
-  const [volume, setVolume] = useState(80);
+  const [playbackMode, setPlaybackMode] = useState(SAVED_PREFS.mode === 'video' ? 'video' : 'audio'); // 'audio' | 'video'
+  const [currentTime, setCurrentTime] = useState(RESTORED_TIME);
+  const [duration, setDuration] = useState(
+    (RESTORED_TRACK && RESTORED_TRACK.durationSec) || FALLBACK_CATALOG.songs[0].durationSec
+  );
+  const [volume, setVolume] = useState(
+    typeof SAVED_PREFS.volume === 'number' ? SAVED_PREFS.volume : 80
+  );
   const [isMuted, setIsMuted] = useState(false);
 
   // Playlist buatan sendiri (tersimpan di HP)
@@ -660,6 +695,11 @@ export default function MusicPlayer() {
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [openPlaylistId, setOpenPlaylistId] = useState(null);
   const queueRef = useRef(null);
+  const currentTimeRef = useRef(RESTORED_TIME);
+  const currentTrackRef = useRef(null);
+  const resumeSecRef = useRef(RESTORED_TIME);
+  currentTimeRef.current = currentTime;
+  currentTrackRef.current = currentTrack;
 
   // Synced lyrics state
   const [lyrics, setLyrics] = useState(FALLBACK_CATALOG.songs[0].lyrics);
@@ -748,10 +788,12 @@ export default function MusicPlayer() {
           rel: 0,
           modestbranding: 1,
           playsinline: 1,
+          start: Math.floor(resumeSecRef.current || 0),
         },
         events: {
           onReady: (ev) => {
             ev.target.setVolume(volumeRef.current);
+            resumeSecRef.current = 0;
             const d = ev.target.getDuration();
             if (d > 0) setDuration(d);
             if (isPlayingRef.current) ev.target.playVideo();
@@ -1023,6 +1065,7 @@ export default function MusicPlayer() {
   const handleSelectTrack = useCallback((track, autoPlay = true, queue = null) => {
     if (!track) return;
     queueRef.current = queue;
+    if (!currentTrack || track.id !== currentTrack.id) resumeSecRef.current = 0;
     if (currentTrack && track.id === currentTrack.id) {
       setMobilePane('lyrics');
       return;
@@ -1091,6 +1134,49 @@ export default function MusicPlayer() {
       ytPlayerRef.current.seekTo(targetSec, true);
     }
   };
+
+  // Simpan aktivitas: riwayat putar, suka, tema, volume, mode
+  useEffect(() => {
+    writeSaved('spideyfy-prefs', { liked: likedIds, suit: suitId, volume, mode: playbackMode });
+  }, [likedIds, suitId, volume, playbackMode]);
+
+  useEffect(() => {
+    writeSaved('spideyfy-history', history);
+  }, [history]);
+
+  // Catat lagu ke riwayat setiap kali diputar
+  useEffect(() => {
+    if (!isPlaying || !currentTrack) return;
+    setHistory((prev) =>
+      [slimTrack(currentTrack), ...prev.filter((x) => x.id !== currentTrack.id)].slice(0, 30)
+    );
+  }, [isPlaying, currentTrack?.id]);
+
+  // Simpan lagu terakhir + posisi detik
+  const saveLast = useCallback(() => {
+    const t = currentTrackRef.current;
+    if (!t) return;
+    writeSaved('spideyfy-last', { track: slimTrack(t), time: Math.floor(currentTimeRef.current) });
+  }, []);
+
+  useEffect(() => {
+    if (!isPlaying) {
+      saveLast();
+      return undefined;
+    }
+    const iv = setInterval(saveLast, 3000);
+    return () => clearInterval(iv);
+  }, [isPlaying, currentTrack, saveLast]);
+
+  useEffect(() => {
+    const onHide = () => saveLast();
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', onHide);
+    return () => {
+      document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('pagehide', onHide);
+    };
+  }, [saveLast]);
 
   // Simpan playlist ke HP
   useEffect(() => {
@@ -1513,6 +1599,7 @@ export default function MusicPlayer() {
                     isPlaying={isPlaying}
                     suit={suit}
                     onPlay={(t) => handleSelectTrack(t, true)}
+                    history={history}
                   />
                 )}
 
