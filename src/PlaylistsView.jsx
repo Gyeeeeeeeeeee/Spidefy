@@ -214,13 +214,146 @@ function PlaylistEditor({ suit, initial, title, saveLabel, onSave, onClose }) {
 
 /* ---------- Tambah lagu ke playlist ---------- */
 
+const TASTE_CHIPS = [
+  { label: 'Pop Indonesia', qs: ['lagu pop indonesia hits'] },
+  { label: 'Galau', qs: ['lagu galau indonesia'] },
+  { label: 'Santai', qs: ['lagu santai chill'] },
+  { label: 'Semangat', qs: ['lagu semangat workout'] },
+  { label: 'Hip-hop', qs: ['hip hop hits'] },
+  { label: 'Rock', qs: ['rock hits'] },
+  { label: 'Lo-fi', qs: ['lofi chill beats'] },
+  { label: 'Akustik', qs: ['akustik cover indonesia'] },
+  { label: 'Dangdut', qs: ['dangdut populer'] },
+  { label: 'K-Pop', qs: ['kpop hits'] },
+  { label: 'Jazz', qs: ['jazz santai'] },
+  { label: 'EDM', qs: ['edm party hits'] },
+  { label: 'Anime', qs: ['anime opening songs'] },
+  { label: 'Religi', qs: ['lagu religi islami'] },
+];
+
+function toSong(item) {
+  const vid = item && (item.videoId || item.id);
+  if (!vid) return null;
+  const sec = Number(item.durationSec) || 180;
+  const m = Math.floor(sec / 60);
+  const sc = Math.floor(sec % 60);
+  return {
+    id: String(vid),
+    videoId: vid,
+    title: item.title || 'Untitled',
+    artist: item.artist || 'Unknown',
+    album: item.album || 'Single',
+    durationSec: sec,
+    durationLabel: `${m}:${String(sc).padStart(2, '0')}`,
+    cover: item.cover || (String(vid).length === 11 ? `https://i.ytimg.com/vi/${vid}/hqdefault.jpg` : undefined),
+    lyrics: null,
+  };
+}
+
+async function searchSongsOnline(query, signal) {
+  const res = await fetch(`/api/ytmusic?q=${encodeURIComponent(query)}`, { signal });
+  if (!res.ok) throw new Error('status ' + res.status);
+  const data = await res.json();
+  return (Array.isArray(data.songs) ? data.songs : []).map(toSong).filter(Boolean);
+}
+
 function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
   const [q, setQ] = useState('');
-  const list = useMemo(() => {
-    const needle = q.trim().toLowerCase();
+  const [sel, setSel] = useState([]);
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  // Chip "Mirip playlist ini": ambil artis yang paling sering ada di playlist
+  const similarChip = useMemo(() => {
+    const count = {};
+    (pl.tracks || []).forEach((t) => {
+      const name = String(t.artist || '').split(',')[0].trim();
+      if (name) count[name] = (count[name] || 0) + 1;
+    });
+    const top = Object.keys(count).sort((x, y) => count[y] - count[x]).slice(0, 2);
+    if (!top.length) return null;
+    return { label: 'Mirip playlist ini', qs: top.map((n) => `${n} lagu populer`) };
+  }, [pl.tracks]);
+
+  const chips = useMemo(() => (similarChip ? [similarChip, ...TASTE_CHIPS] : TASTE_CHIPS), [similarChip]);
+  const typed = q.trim();
+  const mode = typed.length >= 2 ? 'search' : sel.length ? 'reco' : 'local';
+
+  const queries = useMemo(() => {
+    if (mode === 'search') return [typed];
+    if (mode === 'reco') return chips.filter((c) => sel.includes(c.label)).flatMap((c) => c.qs).slice(0, 6);
+    return [];
+  }, [mode, typed, chips, sel]);
+  const queryKey = queries.join('||');
+
+  useEffect(() => {
+    if (!queries.length) {
+      setResults([]);
+      setLoading(false);
+      setFailed(false);
+      return undefined;
+    }
+    let cancelled = false;
+    const controller = new AbortController();
+    setLoading(true);
+    setFailed(false);
+    const timer = setTimeout(async () => {
+      try {
+        const lists = await Promise.all(
+          queries.map((qq) => searchSongsOnline(qq, controller.signal).catch(() => null))
+        );
+        if (cancelled) return;
+        if (lists.every((l) => l === null)) {
+          setFailed(true);
+          setResults([]);
+        } else {
+          // gabung bergantian supaya tiap selera kebagian, tanpa lagu dobel
+          const seen = new Set();
+          const merged = [];
+          const valid = lists.filter(Boolean);
+          const max = Math.max(...valid.map((l) => l.length), 0);
+          for (let i = 0; i < max && merged.length < 40; i += 1) {
+            valid.forEach((l) => {
+              if (l[i] && !seen.has(l[i].id)) {
+                seen.add(l[i].id);
+                merged.push(l[i]);
+              }
+            });
+          }
+          setResults(merged);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }, 450);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      controller.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryKey]);
+
+  const localList = useMemo(() => {
+    const needle = typed.toLowerCase();
     if (!needle) return songs;
     return songs.filter((s) => `${s.title} ${s.artist}`.toLowerCase().includes(needle));
-  }, [q, songs]);
+  }, [typed, songs]);
+
+  // Kalau pencarian online gagal, tetap tampilkan hasil dari daftar yang ada
+  const list = mode === 'local' || failed ? localList : results;
+
+  const toggleChip = (label) => {
+    setSel((prev) => (prev.includes(label) ? prev.filter((x) => x !== label) : [...prev, label]));
+  };
+
+  const heading =
+    mode === 'search'
+      ? `Hasil pencarian "${typed}"`
+      : mode === 'reco'
+      ? 'Rekomendasi sesuai seleramu'
+      : 'Dari daftar yang sedang tampil';
 
   return (
     <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/80" onClick={onClose}>
@@ -239,15 +372,40 @@ function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Cari lagu"
+            placeholder="Cari lagu atau artis apa saja"
             className="flex-1 min-w-0 bg-transparent text-sm text-white outline-none"
           />
+          {q && (
+            <button type="button" onClick={() => setQ('')} aria-label="Hapus pencarian" className="text-white">
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
-        <p className="text-[11px] text-neutral-400 -mt-1">
-          Lagu diambil dari daftar yang sedang tampil. Mau lagu lain? Cari dulu di tab Cari, lalu tekan + di lagunya.
-        </p>
+        <div>
+          <div className="text-[11px] font-bold text-neutral-300 mb-1.5">Pilih seleramu untuk dapat rekomendasi</div>
+          <div className="flex gap-1.5 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
+            {chips.map((c) => {
+              const on = sel.includes(c.label);
+              return (
+                <button
+                  key={c.label}
+                  type="button"
+                  onClick={() => toggleChip(c.label)}
+                  aria-pressed={on}
+                  className="shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold text-white border"
+                  style={on ? { backgroundColor: suit.primary, borderColor: suit.primary } : { backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'transparent' }}
+                >
+                  {c.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="text-[11px] font-bold text-neutral-400 -mb-1">{heading}</div>
         <div className="flex-1 overflow-y-auto space-y-1">
-          {list.length === 0 && <p className="text-xs text-neutral-400 px-1">Tidak ada lagu.</p>}
+          {loading && mode !== 'local' && <p className="text-xs text-neutral-400 px-1">Mencari lagu...</p>}
+          {failed && <p className="text-[11px] text-neutral-400 px-1">Pencarian online belum tersambung. Menampilkan dari daftar yang ada.</p>}
+          {!loading && list.length === 0 && <p className="text-xs text-neutral-400 px-1">Tidak ada lagu.</p>}
           {list.map((s) => {
             const has = pl.tracks.some((t) => t.id === s.id);
             return (
