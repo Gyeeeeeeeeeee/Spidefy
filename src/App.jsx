@@ -33,6 +33,7 @@ import {
   Check,
   Repeat,
   Repeat1,
+  Shuffle,
 } from 'lucide-react';
 
 // Paksa YouTube IFrame & WebView mengira layar selalu aktif (tidak pernah hidden/pause)
@@ -463,6 +464,25 @@ function normalizeApiPayload(raw) {
   };
 }
 
+function ShuffleButton({ on, onClick, suit, big }) {
+  const label = on ? 'Acak lagu: hidup' : 'Acak lagu: mati';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      aria-pressed={on}
+      style={on ? { color: suit.primary, filter: `drop-shadow(0 0 6px ${suit.glow})` } : undefined}
+      className={`${big ? 'w-10 h-10' : 'p-1.5'} rounded-full flex items-center justify-center transition active:scale-90 ${
+        on ? '' : 'text-neutral-400 hover:text-white'
+      }`}
+    >
+      <Shuffle className={big ? 'w-5 h-5' : 'w-4 h-4'} />
+    </button>
+  );
+}
+
 function RepeatButton({ mode, onClick, suit, big }) {
   const active = mode !== 'off';
   const Icon = mode === 'one' ? Repeat1 : Repeat;
@@ -755,6 +775,11 @@ export default function MusicPlayer() {
   const [repeatMode, setRepeatMode] = useState(
     ['off', 'all', 'one'].includes(SAVED_PREFS.repeatMode) ? SAVED_PREFS.repeatMode : 'all'
   );
+  const [shuffleOn, setShuffleOn] = useState(SAVED_PREFS.shuffle === true);
+  const shuffleRef = useRef(false);
+  shuffleRef.current = shuffleOn;
+  const shuffleBagRef = useRef([]);
+  const shuffleHistoryRef = useRef([]);
   const [fullLyrics, setFullLyrics] = useState(false);
   const fullLyricsRef = useRef(null);
   const scrubbingRef = useRef(false);
@@ -1225,6 +1250,10 @@ export default function MusicPlayer() {
 
   const handleSelectTrack = useCallback((track, autoPlay = true, queue = null) => {
     if (!track) return;
+    if (queue !== queueRef.current) {
+      shuffleBagRef.current = [];
+      shuffleHistoryRef.current = [];
+    }
     queueRef.current = queue;
     if (!currentTrack || track.id !== currentTrack.id) resumeSecRef.current = 0;
     if (currentTrack && track.id === currentTrack.id) {
@@ -1255,6 +1284,34 @@ export default function MusicPlayer() {
     (delta) => {
       const list = queueRef.current && queueRef.current.length ? queueRef.current : catalog.songs;
       if (!list.length) return;
+      if (shuffleRef.current && list.length > 1) {
+        if (delta < 0) {
+          // kembali ke lagu yang tadi diputar (riwayat acak)
+          while (shuffleHistoryRef.current.length) {
+            const prevId = shuffleHistoryRef.current.pop();
+            const prev = list.find((t) => t.id === prevId);
+            if (prev && prev.id !== currentTrack?.id) {
+              handleSelectTrack(prev, true, queueRef.current);
+              return;
+            }
+          }
+        } else {
+          const ids = new Set(list.map((t) => t.id));
+          let bag = shuffleBagRef.current.filter((id) => ids.has(id) && id !== currentTrack?.id);
+          if (!bag.length) bag = list.map((t) => t.id).filter((id) => id !== currentTrack?.id);
+          const pickIdx = Math.floor(Math.random() * bag.length);
+          const pickId = bag[pickIdx];
+          bag.splice(pickIdx, 1);
+          shuffleBagRef.current = bag;
+          if (currentTrack?.id) shuffleHistoryRef.current.push(currentTrack.id);
+          if (shuffleHistoryRef.current.length > 50) shuffleHistoryRef.current.shift();
+          const pick = list.find((t) => t.id === pickId);
+          if (pick) {
+            handleSelectTrack(pick, true, queueRef.current);
+            return;
+          }
+        }
+      }
       const idx = list.findIndex((t) => t.id === currentTrack?.id);
       const nextIdx = idx === -1 ? 0 : (idx + delta + list.length) % list.length;
       handleSelectTrack(list[nextIdx], true, queueRef.current);
@@ -1273,7 +1330,7 @@ export default function MusicPlayer() {
         if (pl && typeof pl.playVideo === 'function') pl.playVideo();
         return;
       }
-      if (!fromError && mode === 'off') {
+      if (!fromError && mode === 'off' && !shuffleRef.current) {
         const list = queueRef.current && queueRef.current.length ? queueRef.current : catalog.songs;
         const idx = list.findIndex((t) => t.id === currentTrack?.id);
         if (list.length && idx === list.length - 1) {
@@ -1292,6 +1349,11 @@ export default function MusicPlayer() {
   );
 
   stepNextRef.current = (fromError) => handleTrackEnded(fromError === true);
+
+  const handleToggleShuffle = () => {
+    shuffleBagRef.current = [];
+    setShuffleOn((v) => !v);
+  };
 
   const handleCycleRepeat = () => {
     setRepeatMode((m) => (m === 'off' ? 'all' : m === 'all' ? 'one' : 'off'));
@@ -1362,8 +1424,9 @@ export default function MusicPlayer() {
       volume,
       mode: playbackMode,
       repeatMode,
+      shuffle: shuffleOn,
     });
-  }, [likedIds, suitId, volume, playbackMode, repeatMode]);
+  }, [likedIds, suitId, volume, playbackMode, repeatMode, shuffleOn]);
 
   useEffect(() => {
     writeSaved('spideyfy-history', history);
@@ -2024,7 +2087,12 @@ export default function MusicPlayer() {
 
                 {activeCatalogTab === 'playlists' && (
                   <div className="space-y-2">
-                    <div className="text-xs font-extrabold text-white pt-1">Playlist Saya</div>
+                    <div className="flex items-center gap-2 pt-1">
+                      <SpiderIcon size={18} color={suit.primary} />
+                      <div className="text-lg font-black italic uppercase text-white tracking-wide" style={{ textShadow: `0 0 14px ${suit.glow}` }}>Playlist Saya</div>
+                      <div className="flex-1 h-px" style={{ background: `linear-gradient(90deg, ${suit.primary}, transparent)` }} />
+                      <span className="text-[11px] font-bold text-neutral-300">{userPlaylists.length}</span>
+                    </div>
                     <div className="flex gap-2">
                       <input
                         value={newPlaylistName}
@@ -2033,13 +2101,14 @@ export default function MusicPlayer() {
                           if (e.key === 'Enter') createPlaylist(newPlaylistName);
                         }}
                         placeholder="Nama playlist baru"
-                        className="flex-1 min-w-0 px-3 py-2 rounded-xl bg-black/50 border border-white/15 text-sm text-white outline-none"
+                        className="flex-1 min-w-0 px-4 py-2.5 rounded-full bg-black/60 text-sm text-white outline-none"
+                        style={{ border: `1px solid ${suit.primary}77`, boxShadow: `inset 0 0 12px rgba(0,0,0,0.6)` }}
                       />
                       <button
                         type="button"
                         onClick={() => createPlaylist(newPlaylistName)}
-                        style={{ backgroundColor: suit.primary }}
-                        className="px-3 py-2 rounded-xl text-sm font-bold text-white inline-flex items-center gap-1 active:scale-95"
+                        style={{ backgroundColor: suit.primary, boxShadow: `0 0 16px ${suit.glow}` }}
+                        className="px-4 py-2.5 rounded-full text-sm font-extrabold text-white inline-flex items-center gap-1 active:scale-95"
                       >
                         <Plus className="w-4 h-4" />
                         <span>Buat</span>
@@ -2051,22 +2120,35 @@ export default function MusicPlayer() {
                       </p>
                     )}
                     {userPlaylists.map((pl) => (
-                      <div key={pl.id} className="rounded-xl bg-white/[0.04] border border-white/[0.08] overflow-hidden">
-                        <div className="p-3 flex items-center gap-2.5">
+                      <div key={pl.id} className="relative isolate rounded-2xl overflow-hidden" style={{ border: `1px solid ${suit.primary}66`, boxShadow: `0 0 16px ${suit.glow}`, background: `linear-gradient(120deg, rgba(10,6,10,0.95) 0%, ${suit.orbA} 100%)` }}>
+                        <div className="absolute inset-0 -z-10 pointer-events-none" aria-hidden="true"><WebCorner color={suit.primary} /></div>
+                        <div className="p-3 flex items-center gap-3">
+                          <div
+                            className="w-14 h-14 rounded-xl overflow-hidden shrink-0 flex items-center justify-center bg-black/60"
+                            style={{ border: `1px solid ${suit.primary}88` }}
+                            onClick={() => setOpenPlaylistId(openPlaylistId === pl.id ? null : pl.id)}
+                          >
+                            {pl.tracks[0] && pl.tracks[0].cover ? (
+                              <img src={pl.tracks[0].cover} alt="" className="w-full h-full object-cover" />
+                            ) : (
+                              <SpiderIcon size={26} color={suit.primary} />
+                            )}
+                          </div>
                           <div
                             className="min-w-0 flex-1 cursor-pointer"
                             onClick={() => setOpenPlaylistId(openPlaylistId === pl.id ? null : pl.id)}
                           >
-                            <div className="text-xs font-bold text-white truncate">{pl.name}</div>
-                            <div className="text-[11px] text-neutral-400 mt-0.5">{pl.tracks.length} lagu</div>
+                            <div className="text-sm font-black italic text-white truncate">{pl.name}</div>
+                            <div className="text-[11px] mt-0.5" style={{ color: suit.primary }}>{pl.tracks.length} lagu</div>
                           </div>
                           <button
                             type="button"
                             onClick={() => playUserPlaylist(pl)}
-                            style={{ backgroundColor: suit.primary }}
-                            className="px-3 py-1.5 rounded-full text-[11px] font-bold text-white shrink-0 active:scale-95"
+                            aria-label="Putar playlist"
+                            style={{ backgroundColor: suit.primary, boxShadow: `0 0 14px ${suit.glow}` }}
+                            className="w-10 h-10 rounded-full text-white shrink-0 flex items-center justify-center active:scale-95"
                           >
-                            Play
+                            <Play className="w-4 h-4 ml-0.5" fill="currentColor" />
                           </button>
                           <button
                             type="button"
@@ -2304,7 +2386,7 @@ export default function MusicPlayer() {
                   >
                     <SkipForward className="w-6 h-6" fill="currentColor" />
                   </button>
-                  <span className="w-10 h-10" aria-hidden="true" />
+                  <ShuffleButton on={shuffleOn} onClick={handleToggleShuffle} suit={suit} big />
                 </div>
               </div>
 
@@ -2397,6 +2479,7 @@ export default function MusicPlayer() {
             {/* Center Transport & Seekbar */}
             <div className="flex flex-col items-center gap-1">
               <div className="flex items-center gap-3 sm:gap-4">
+                <ShuffleButton on={shuffleOn} onClick={handleToggleShuffle} suit={suit} />
                 <RepeatButton mode={repeatMode} onClick={handleCycleRepeat} suit={suit} />
                 <button
                   type="button"
@@ -2667,7 +2750,7 @@ export default function MusicPlayer() {
               >
                 <SkipForward className="w-6 h-6" fill="currentColor" />
               </button>
-              <span className="w-10 h-10" aria-hidden="true" />
+              <ShuffleButton on={shuffleOn} onClick={handleToggleShuffle} suit={suit} big />
             </div>
           </div>
         </div>,
