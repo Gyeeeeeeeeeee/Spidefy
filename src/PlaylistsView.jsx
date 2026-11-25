@@ -356,7 +356,8 @@ export function PlaylistDetail({
   isPlaying,
   onBack,
   onPlay,
-  onShuffle,
+  shuffleOn,
+  onToggleShuffle,
   onUpdate,
   onDelete,
   onToggleTrack,
@@ -494,12 +495,17 @@ export function PlaylistDetail({
           <div className="flex items-center gap-4">
             <button
               type="button"
-              onClick={() => onShuffle(pl)}
-              aria-label="Acak"
-              className="active:scale-90"
-              style={{ color: suit.primary }}
+              onClick={onToggleShuffle}
+              aria-label={shuffleOn ? 'Acak aktif, tekan untuk mematikan' : 'Acak mati, tekan untuk menyalakan'}
+              aria-pressed={shuffleOn}
+              className="relative flex flex-col items-center active:scale-90"
+              style={{ color: shuffleOn ? suit.primary : 'rgba(255,255,255,0.7)' }}
             >
               <Shuffle className="w-7 h-7" />
+              <span
+                className="mt-1 w-1 h-1 rounded-full"
+                style={{ backgroundColor: shuffleOn ? suit.primary : 'transparent' }}
+              />
             </button>
             <button
               type="button"

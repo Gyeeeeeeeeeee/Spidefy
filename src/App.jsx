@@ -1515,11 +1515,17 @@ export default function MusicPlayer() {
     setUserPlaylists((prev) => prev.map((pl) => (pl.id === plId ? { ...pl, ...patch } : pl)));
   };
 
-  const shufflePlaylist = (pl) => {
+  // Dari halaman playlist: lagu yang ditekan diputar apa adanya,
+  // tombol putar besar mulai dari lagu pertama (atau acak kalau acak menyala)
+  const playFromPlaylistPage = (pl, track) => {
     if (!pl.tracks.length) return;
-    setShuffleOn(true);
-    const t = pl.tracks[Math.floor(Math.random() * pl.tracks.length)];
-    handleSelectTrack(t, true, pl.tracks);
+    let start = track;
+    if (!start) {
+      start = shuffleRef.current
+        ? pl.tracks[Math.floor(Math.random() * pl.tracks.length)]
+        : pl.tracks[0];
+    }
+    handleSelectTrack(start, true, pl.tracks);
   };
 
   const openPlaylist = userPlaylists.find((pl) => pl.id === openPlaylistId) || null;
@@ -2114,8 +2120,9 @@ export default function MusicPlayer() {
                     currentTrackId={currentTrack?.id}
                     isPlaying={isPlaying}
                     onBack={() => setOpenPlaylistId(null)}
-                    onPlay={playUserPlaylist}
-                    onShuffle={shufflePlaylist}
+                    onPlay={playFromPlaylistPage}
+                    shuffleOn={shuffleOn}
+                    onToggleShuffle={handleToggleShuffle}
                     onUpdate={updatePlaylist}
                     onDelete={deletePlaylist}
                     onToggleTrack={toggleTrackInPlaylist}
