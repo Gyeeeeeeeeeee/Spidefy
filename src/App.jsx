@@ -371,6 +371,45 @@ function parseLrcText(lrcText) {
   return out;
 }
 
+// ---- Pencocokan lirik yang ketat (supaya lagu instrumental tidak dapat lirik lagu lain) ----
+const normLyr = (x) =>
+  String(x || '')
+    .toLowerCase()
+    .replace(/\(.*?\)|\[.*?\]/g, ' ')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+function wordsOverlap(a, b) {
+  const A = new Set(a.split(' ').filter(Boolean));
+  const B = new Set(b.split(' ').filter(Boolean));
+  if (!A.size || !B.size) return 0;
+  let n = 0;
+  A.forEach((w) => {
+    if (B.has(w)) n += 1;
+  });
+  return n / Math.max(A.size, B.size);
+}
+
+function lyricsMatch(item, track, cleanTitle, durSec) {
+  if (!item) return false;
+  const t1 = normLyr(item.trackName || item.name);
+  const t2 = normLyr(cleanTitle);
+  if (!t1 || !t2) return false;
+  if (t1 !== t2 && wordsOverlap(t1, t2) < 0.8) return false;
+  const a1 = normLyr(item.artistName);
+  const a2 = normLyr(track.artist);
+  if (a1 && a2) {
+    const words2 = a2.split(' ');
+    const hit = a1.split(' ').some((w) => w.length > 2 && words2.includes(w));
+    if (!hit && !a2.includes(a1) && !a1.includes(a2)) return false;
+  }
+  if (item.duration && Math.abs(Number(item.duration) - durSec) > 5) return false;
+  return true;
+}
+
+const INSTRUMENTAL_TITLE = /\b(instrumental|karaoke|inst\.?)\b/i;
+
 function buildPlainLyrics(plainText) {
   return String(plainText || '')
     .split(/\r?\n/)
@@ -688,7 +727,7 @@ function ChibiSpidey({ color }) {
   );
 }
 
-function NoLyrics({ suit, loading, seed }) {
+function NoLyrics({ suit, loading, instrumental, seed }) {
   const idx = String(seed || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % SPIDEY_QUOTES.length;
   return (
     <div className="flex flex-col items-center text-center gap-3 py-4 px-3">
@@ -700,7 +739,7 @@ function NoLyrics({ suit, loading, seed }) {
       </div>
       {!loading && (
         <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: suit.primary }}>
-          Lirik tidak ditemukan
+          {instrumental ? 'Instrumental' : 'Lirik tidak ditemukan'}
         </span>
       )}
     </div>
@@ -940,6 +979,8 @@ export default function MusicPlayer() {
   // Synced lyrics state
   const [lyrics, setLyrics] = useState(FALLBACK_CATALOG.songs[0].lyrics);
   const [lyricsSource, setLyricsSource] = useState('Synced Lyrics');
+  const [lyricsSynced, setLyricsSynced] = useState(true);
+  const lyricsReqRef = useRef(0);
   const [activeLineIndex, setActiveLineIndex] = useState(0);
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggest, setShowSuggest] = useState(false);
@@ -1224,7 +1265,7 @@ export default function MusicPlayer() {
 
   // Compute active lyric line index based on currentTime
   useEffect(() => {
-    if (!lyrics.length) {
+    if (!lyrics.length || !lyricsSynced) {
       setActiveLineIndex(-1);
       return;
     }
@@ -1237,7 +1278,7 @@ export default function MusicPlayer() {
       }
     }
     setActiveLineIndex(idx);
-  }, [currentTime, lyrics]);
+  }, [currentTime, lyrics, lyricsSynced]);
 
   // Smooth auto-scroll active lyric line into view
   useEffect(() => {
@@ -1249,49 +1290,91 @@ export default function MusicPlayer() {
     }
   }, [activeLineIndex]);
 
-  // Fetch synced lyrics from LRCLIB with graceful fallback
+  // Fetch lyrics from LRCLIB (pencocokan ketat; instrumental = tanpa lirik)
   const loadLyricsForTrack = useCallback(async (track) => {
     if (!track) return;
+    const reqId = ++lyricsReqRef.current;
+    const isStale = () => reqId !== lyricsReqRef.current;
+
     if (Array.isArray(track.lyrics) && track.lyrics.length > 0) {
       setLyrics(track.lyrics);
+      setLyricsSynced(true);
       setLyricsSource('Synced Lyrics');
       return;
     }
 
     setLyrics([]);
+    setLyricsSynced(true);
+
+    // Judul menyebut instrumental/karaoke -> tidak ada lirik
+    if (INSTRUMENTAL_TITLE.test(String(track.title || ''))) {
+      setLyricsSource('Instrumental');
+      return;
+    }
+
     setLyricsSource('Searching LRCLIB...');
     try {
       const cleanTitle = String(track.title || '').replace(/\(.*?\)|\[.*?\]/g, '').trim();
       const firstArtist = String(track.artist || '').split(',')[0].trim();
-      const url = `https://lrclib.net/api/search?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(firstArtist)}`;
-      const res = await fetch(url);
-      if (res.ok) {
-        const raw = await res.json();
-        const durSec = Number(track.durationSec) || 0;
-        const items = Array.isArray(raw)
-          ? raw.filter((i) => durSec > 0 && durSec <= 600 && i.duration && Math.abs(Number(i.duration) - durSec) <= 8)
-          : [];
-        if (items.length > 0) {
-          const syncedItem = items.find((i) => i.syncedLyrics);
-          const plainItem = items.find((i) => i.plainLyrics);
-          if (syncedItem?.syncedLyrics) {
-            const parsed = parseLrcText(syncedItem.syncedLyrics);
-            if (parsed.length) {
-              setLyrics(parsed);
-              setLyricsSource('LRCLIB Synced');
-              return;
-            }
+      const durSec = Number(track.durationSec) || 0;
+      if (cleanTitle && durSec > 0 && durSec <= 600) {
+        const base = 'https://lrclib.net/api';
+        let list = [];
+        try {
+          const r1 = await fetch(
+            `${base}/get?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(firstArtist)}&duration=${Math.round(durSec)}`
+          );
+          if (r1.ok) {
+            const j = await r1.json();
+            if (j && typeof j === 'object' && !Array.isArray(j)) list.push(j);
           }
-          if (plainItem?.plainLyrics) {
-            setLyrics(buildPlainLyrics(plainItem.plainLyrics));
-            setLyricsSource('Lyrics');
+        } catch {
+          // lanjut ke pencarian
+        }
+        try {
+          const r2 = await fetch(
+            `${base}/search?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(firstArtist)}`
+          );
+          if (r2.ok) {
+            const raw = await r2.json();
+            if (Array.isArray(raw)) list = list.concat(raw);
+          }
+        } catch {
+          // abaikan
+        }
+        if (isStale()) return;
+
+        const valid = list.filter((i) => lyricsMatch(i, track, cleanTitle, durSec));
+        const syncedItem = valid.find((i) => i.syncedLyrics && !i.instrumental);
+        if (syncedItem) {
+          const parsed = parseLrcText(syncedItem.syncedLyrics);
+          if (parsed.length) {
+            setLyrics(parsed);
+            setLyricsSynced(true);
+            setLyricsSource('LRCLIB Synced');
             return;
           }
+        }
+        const plainItem = valid.find((i) => i.plainLyrics && !i.instrumental);
+        if (plainItem) {
+          // Tanpa timestamp: tampil apa adanya, tidak berpura-pura tersinkron
+          const lines = buildPlainLyrics(plainItem.plainLyrics);
+          if (lines.length) {
+            setLyrics(lines);
+            setLyricsSynced(false);
+            setLyricsSource('Lirik (tanpa sinkron)');
+            return;
+          }
+        }
+        if (valid.some((i) => i.instrumental)) {
+          setLyricsSource('Instrumental');
+          return;
         }
       }
     } catch {
       // Fallback below
     }
+    if (isStale()) return;
 
     setLyrics([]);
     setLyricsSource('Tanpa lirik');
@@ -2676,7 +2759,7 @@ export default function MusicPlayer() {
                 }}
               >
                 {lyrics.length === 0 && (
-                  <NoLyrics suit={suit} loading={lyricsSource === 'Searching LRCLIB...'} seed={currentTrack?.id} />
+                  <NoLyrics suit={suit} loading={lyricsSource === 'Searching LRCLIB...'} instrumental={lyricsSource === 'Instrumental'} seed={currentTrack?.id} />
                 )}
                 {lyrics.map((line, i) => {
                   const isActive = i === activeLineIndex;
@@ -2685,7 +2768,7 @@ export default function MusicPlayer() {
                     <p
                       key={`${line.time}-${i}`}
                       ref={isActive ? activeLineRef : null}
-                      onClick={() => seekToSec(line.time)}
+                      onClick={() => { if (lyricsSynced) seekToSec(line.time); }}
                       style={
                         isActive
                           ? {
@@ -2924,7 +3007,7 @@ export default function MusicPlayer() {
             }}
           >
             {lyrics.length === 0 && (
-              <NoLyrics suit={suit} loading={lyricsSource === 'Searching LRCLIB...'} seed={currentTrack?.id} />
+              <NoLyrics suit={suit} loading={lyricsSource === 'Searching LRCLIB...'} instrumental={lyricsSource === 'Instrumental'} seed={currentTrack?.id} />
             )}
             {lyrics.map((line, i) => {
               const isActive = i === activeLineIndex;
@@ -2933,7 +3016,7 @@ export default function MusicPlayer() {
                 <p
                   id={`full-line-${i}`}
                   key={`full-${line.time}-${i}`}
-                  onClick={() => seekToSec(line.time)}
+                  onClick={() => { if (lyricsSynced) seekToSec(line.time); }}
                   style={
                     isActive
                       ? { color: '#ffffff', textShadow: `0 0 18px ${suit.glow}, 0 0 34px ${suit.glow}` }
