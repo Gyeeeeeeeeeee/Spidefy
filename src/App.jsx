@@ -842,6 +842,7 @@ export default function MusicPlayer() {
   const isPlayingRef = useRef(false);
   const volumeRef = useRef(80);
   const stepNextRef = useRef(null);
+  const errorStreakRef = useRef(0);
   isPlayingRef.current = isPlaying;
   const playbackModeRef = useRef('audio');
   playbackModeRef.current = playbackMode;
@@ -972,8 +973,11 @@ export default function MusicPlayer() {
                 try { ev.target.playVideo(); } catch { /* abaikan */ }
               }, 250);
             } else if (ev.data === S.PLAYING && !isPlayingRef.current) {
+              errorStreakRef.current = 0;
               isPlayingRef.current = true;
               setIsPlaying(true);
+            } else if (ev.data === S.PLAYING) {
+              errorStreakRef.current = 0;
             }
           },
           onError: (ev) => {
@@ -983,6 +987,15 @@ export default function MusicPlayer() {
                 ? 'Lagu ini tidak boleh diputar di luar YouTube, lanjut ke lagu berikutnya'
                 : 'Lagu gagal dimuat, lanjut ke lagu berikutnya'
             );
+            errorStreakRef.current += 1;
+            if (errorStreakRef.current >= 5) {
+              // Jangan loncat-loncat tanpa henti kalau banyak lagu berturut-turut gagal
+              errorStreakRef.current = 0;
+              isPlayingRef.current = false;
+              setIsPlaying(false);
+              setStatusMessage('Beberapa lagu berturut-turut gagal diputar. Cek koneksi atau coba lagu lain.');
+              return;
+            }
             if (stepNextRef.current) stepNextRef.current(true);
           },
         },
@@ -1258,6 +1271,13 @@ export default function MusicPlayer() {
     queueRef.current = queue;
     if (!currentTrack || track.id !== currentTrack.id) resumeSecRef.current = 0;
     if (currentTrack && track.id === currentTrack.id) {
+      // Lagu yang sama tapi sedang jeda / baru dibuka: tekan lagi harus langsung memutar
+      if (autoPlay && !isPlayingRef.current) {
+        isPlayingRef.current = true;
+        const player = ytPlayerRef.current;
+        if (player && typeof player.playVideo === 'function') player.playVideo();
+        setIsPlaying(true);
+      }
       setMobilePane('lyrics');
       return;
     }
