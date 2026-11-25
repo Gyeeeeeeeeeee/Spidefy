@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { MediaSession } from '@jofr/capacitor-media-session';
+import { registerPlugin } from '@capacitor/core';
 import {
   Search,
   Heart,
@@ -522,6 +523,16 @@ function writeSaved(key, value) {
 }
 
 const SAVED_LAST = readSaved('spideyfy-last', null);
+// Dynamic Island = overlay native Android (hanya aktif di APK), muncul saat app ditinggal lewat tombol Home
+const Island = registerPlugin('Island');
+const IS_NATIVE =
+  typeof window !== 'undefined' &&
+  !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+
+const ISLAND_OK =
+  IS_NATIVE &&
+  !!(window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable('Island'));
+
 const SAVED_PREFS = readSaved('spideyfy-prefs', null) || {};
 const SAVED_HISTORY_RAW = readSaved('spideyfy-history', []);
 const SAVED_HISTORY = Array.isArray(SAVED_HISTORY_RAW) ? SAVED_HISTORY_RAW.filter((x) => x && x.videoId) : [];
@@ -715,7 +726,72 @@ function askBackgroundPermission() {
   return true;
 }
 
-function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, backendConnected, notifLyrics, setNotifLyrics }) {
+const BACKUP_KEYS = ['spideyfy-playlists', 'spideyfy-prefs', 'spideyfy-history'];
+
+function BackupSection({ suit }) {
+  const [text, setText] = useState('');
+  const [msg, setMsg] = useState('');
+
+  const makeBackup = async () => {
+    const data = {};
+    BACKUP_KEYS.forEach((k) => {
+      try {
+        const v = localStorage.getItem(k);
+        if (v != null) data[k] = v;
+      } catch {
+        // abaikan
+      }
+    });
+    const out = JSON.stringify({ app: 'spideyfy', v: 1, data });
+    setText(out);
+    try {
+      await navigator.clipboard.writeText(out);
+      setMsg('Backup sudah disalin. Tempel & simpan di Catatan / kirim ke chat sendiri.');
+    } catch {
+      setMsg('Salin teks di kotak ini secara manual (tekan lama, Pilih semua, Salin), lalu simpan.');
+    }
+  };
+
+  const restore = () => {
+    try {
+      const obj = JSON.parse(text.trim());
+      if (!obj || obj.app !== 'spideyfy' || !obj.data) throw new Error('bad');
+      Object.keys(obj.data).forEach((k) => {
+        if (BACKUP_KEYS.includes(k) && typeof obj.data[k] === 'string') localStorage.setItem(k, obj.data[k]);
+      });
+      setMsg('Berhasil dipulihkan. Memuat ulang...');
+      setTimeout(() => window.location.reload(), 600);
+    } catch {
+      setMsg('Teks backup tidak valid. Pastikan tertempel utuh.');
+    }
+  };
+
+  return (
+    <div>
+      <h3 className="text-sm font-black italic text-white mb-2">Cadangan data</h3>
+      <div className="rounded-xl bg-white/[0.05] p-3 space-y-2">
+        <p className="text-[11px] text-neutral-400">Simpan playlist, suka, dan pengaturan sebelum install ulang APK, lalu pulihkan setelahnya.</p>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Teks backup muncul di sini. Untuk memulihkan, tempel teks backup lalu tekan Pulihkan."
+          className="w-full h-24 rounded-lg bg-black/40 text-[11px] text-white p-2 outline-none border border-white/10"
+        />
+        <div className="grid grid-cols-2 gap-2">
+          <button type="button" onClick={makeBackup} className="rounded-xl py-2.5 text-xs font-bold text-white" style={{ background: suit.primary }}>
+            Buat backup
+          </button>
+          <button type="button" onClick={restore} className="rounded-xl py-2.5 text-xs font-bold text-white bg-white/10">
+            Pulihkan
+          </button>
+        </div>
+        {msg && <p className="text-[11px] text-neutral-300">{msg}</p>}
+      </div>
+    </div>
+  );
+}
+
+function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, backendConnected, islandOn, setIslandOn, islandLyrics, setIslandLyrics, notifLyrics, setNotifLyrics }) {
   return (
     <div className="space-y-4 pb-4">
       <div>
@@ -740,9 +816,15 @@ function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, 
         </div>
       </div>
       <div>
-        <h3 className="text-sm font-black italic text-white mb-2">Notifikasi</h3>
+        <h3 className="text-sm font-black italic text-white mb-2">Dynamic Island</h3>
         <div className="rounded-xl bg-white/[0.05] divide-y divide-white/10">
           {[
+            ...(ISLAND_OK
+              ? [
+                  { label: 'Tampilkan Dynamic Island', sub: 'Pil melayang di atas layar saat kamu menekan Home. Butuh izin "Tampil di atas aplikasi lain". Ketuk pil untuk membuka kontrol.', on: islandOn, set: setIslandOn },
+                  { label: 'Tampilkan lirik di Island', sub: 'Baris lirik yang sedang dinyanyikan muncul di dalam pil.', on: islandLyrics, set: setIslandLyrics, disabled: !islandOn },
+                ]
+              : []),
             { label: 'Lirik di notifikasi & layar kunci', sub: 'Baris lirik tampil di notifikasi musik, juga saat aplikasi ditutup atau layar dikunci.', on: notifLyrics, set: setNotifLyrics },
           ].map((row) => (
             <button
@@ -777,6 +859,7 @@ function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, 
         </button>
         <p className="text-[11px] text-neutral-400 mt-1.5">Kalau musik berhenti saat layar mati: izinkan notifikasi, lalu pilih izinkan / "Tanpa batasan" pada penghematan baterai.</p>
       </div>
+      <BackupSection suit={suit} />
       <div className="rounded-xl bg-white/[0.05] p-3 text-[11px] text-neutral-300 space-y-1">
         <div className="font-bold text-white">Status</div>
         <div>{backendConnected ? 'Terhubung ke pencarian YouTube Music.' : 'Memakai katalog bawaan (pencarian belum terhubung).'}</div>
@@ -821,6 +904,8 @@ export default function MusicPlayer() {
   // Playback state (Audio mode uses Web Audio / synced timer fallback; Video mode uses YouTube IFrame)
   const [currentTrack, setCurrentTrack] = useState(RESTORED_TRACK || FALLBACK_CATALOG.songs[0]);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [islandOn, setIslandOn] = useState(SAVED_PREFS.islandOn === true); // default MATI
+  const [islandLyrics, setIslandLyrics] = useState(SAVED_PREFS.islandLyrics !== false);
   const [notifLyrics, setNotifLyrics] = useState(SAVED_PREFS.notifLyrics !== false);
   const [playbackMode, setPlaybackMode] = useState(SAVED_PREFS.mode === 'video' ? 'video' : 'audio'); // 'audio' | 'video'
   const [currentTime, setCurrentTime] = useState(RESTORED_TIME);
@@ -1519,6 +1604,61 @@ export default function MusicPlayer() {
     setRepeatMode((m) => (m === 'off' ? 'all' : m === 'all' ? 'one' : 'off'));
   };
 
+  // ---- Dynamic Island (overlay native, muncul saat app di-Home) ----
+  const handleSetIsland = useCallback(async (v) => {
+    if (v && ISLAND_OK) {
+      try {
+        const r = await Island.hasPermission();
+        if (!r || !r.granted) await Island.requestPermission();
+      } catch (e) {
+        // abaikan
+      }
+    }
+    setIslandOn(v);
+  }, []);
+
+  const islandLine =
+    islandLyrics && Array.isArray(lyrics) && activeLineIndex >= 0 && lyrics.length > 0
+      ? String(lyrics[activeLineIndex]?.text || '').trim()
+      : '';
+
+  useEffect(() => {
+    if (!ISLAND_OK) return;
+    Island.setEnabled({ enabled: islandOn }).catch(() => {});
+  }, [islandOn]);
+
+  useEffect(() => {
+    if (!ISLAND_OK) return;
+    Island.update({
+      title: currentTrack?.title || '',
+      artist: currentTrack?.artist || '',
+      line: islandLine,
+      playing: !!isPlaying,
+      active: !!currentTrack,
+    }).catch(() => {});
+  }, [currentTrack, islandLine, isPlaying]);
+
+  useEffect(() => {
+    if (!ISLAND_OK) return undefined;
+    let handle = null;
+    let cancelled = false;
+    Island.addListener('action', (e) => {
+      const a = e && e.action;
+      if (a === 'toggle') handleTogglePlayPause();
+      else if (a === 'next') handleStepTrack(1);
+      else if (a === 'prev') handleStepTrack(-1);
+    })
+      .then((h) => {
+        if (cancelled) h.remove();
+        else handle = h;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      if (handle) handle.remove();
+    };
+  }, [handleTogglePlayPause, handleStepTrack]);
+
   // Judul + artis di notifikasi / layar kunci; baris lirik yang sedang dinyanyikan ikut tampil di sana
   const notifLine =
     notifLyrics && isPlaying && Array.isArray(lyrics) && activeLineIndex >= 0 && lyrics.length > 0
@@ -1600,9 +1740,11 @@ export default function MusicPlayer() {
       mode: playbackMode,
       repeatMode,
       shuffle: shuffleOn,
+      islandOn,
+      islandLyrics,
       notifLyrics,
     });
-  }, [likedIds, suitId, volume, playbackMode, repeatMode, shuffleOn, notifLyrics]);
+  }, [likedIds, suitId, volume, playbackMode, repeatMode, shuffleOn, islandOn, islandLyrics, notifLyrics]);
 
   useEffect(() => {
     writeSaved('spideyfy-history', history);
@@ -2147,6 +2289,10 @@ export default function MusicPlayer() {
                     playbackMode={playbackMode}
                     setPlaybackMode={setPlaybackMode}
                     backendConnected={backendConnected}
+                    islandOn={islandOn}
+                    setIslandOn={handleSetIsland}
+                    islandLyrics={islandLyrics}
+                    setIslandLyrics={setIslandLyrics}
                     notifLyrics={notifLyrics}
                     setNotifLyrics={setNotifLyrics}
                   />
