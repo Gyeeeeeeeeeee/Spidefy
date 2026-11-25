@@ -844,6 +844,7 @@ export default function MusicPlayer() {
   const stepNextRef = useRef(null);
   const errorStreakRef = useRef(0);
   const stuckRef = useRef(0);
+  const awayPausedRef = useRef(0);
   const loadedVideoRef = useRef('');
   const tryAlternateRef = useRef(null);
   const triedVideosRef = useRef({});
@@ -1051,6 +1052,18 @@ export default function MusicPlayer() {
           }
         } else {
           stuckRef.current = 0;
+        }
+        // Di latar belakang YouTube sering menjeda sendiri dan menolak diputar lagi dari web.
+        // Jangan pura-pura "memutar": tampilkan jeda di notifikasi supaya bisa ditekan play sekali.
+        if (away && st === 2) {
+          awayPausedRef.current += 1;
+          if (awayPausedRef.current >= 4) {
+            awayPausedRef.current = 0;
+            isPlayingRef.current = false;
+            setIsPlaying(false);
+          }
+        } else {
+          awayPausedRef.current = 0;
         }
         if (!ready) return;
         if ((away || playbackModeRef.current === 'audio') && (st === 2 || st === 5 || st === -1)) {
