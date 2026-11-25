@@ -716,7 +716,7 @@ function askBackgroundPermission() {
   return true;
 }
 
-function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, backendConnected, islandOn, setIslandOn, islandLyrics, setIslandLyrics }) {
+function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, backendConnected, islandOn, setIslandOn, islandLyrics, setIslandLyrics, notifLyrics, setNotifLyrics }) {
   return (
     <div className="space-y-4 pb-4">
       <div>
@@ -746,6 +746,7 @@ function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, 
           {[
             { label: 'Tampilkan Dynamic Island', sub: 'Pil melayang di atas layar berisi lagu yang diputar. Ketuk untuk membuka kontrol.', on: islandOn, set: setIslandOn },
             { label: 'Tampilkan lirik di Island', sub: 'Baris lirik yang sedang dinyanyikan muncul di dalam pil.', on: islandLyrics, set: setIslandLyrics, disabled: !islandOn },
+            { label: 'Lirik di notifikasi & layar kunci', sub: 'Baris lirik tampil di notifikasi musik, juga saat aplikasi ditutup atau layar dikunci.', on: notifLyrics, set: setNotifLyrics },
           ].map((row) => (
             <button
               key={row.label}
@@ -823,8 +824,9 @@ export default function MusicPlayer() {
   // Playback state (Audio mode uses Web Audio / synced timer fallback; Video mode uses YouTube IFrame)
   const [currentTrack, setCurrentTrack] = useState(RESTORED_TRACK || FALLBACK_CATALOG.songs[0]);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [islandOn, setIslandOn] = useState(SAVED_PREFS.island !== false);
+  const [islandOn, setIslandOn] = useState(SAVED_PREFS.islandOn === true);
   const [islandLyrics, setIslandLyrics] = useState(SAVED_PREFS.islandLyrics !== false);
+  const [notifLyrics, setNotifLyrics] = useState(SAVED_PREFS.notifLyrics !== false);
   const [playbackMode, setPlaybackMode] = useState(SAVED_PREFS.mode === 'video' ? 'video' : 'audio'); // 'audio' | 'video'
   const [currentTime, setCurrentTime] = useState(RESTORED_TIME);
   const [duration, setDuration] = useState(
@@ -1522,6 +1524,27 @@ export default function MusicPlayer() {
     setRepeatMode((m) => (m === 'off' ? 'all' : m === 'all' ? 'one' : 'off'));
   };
 
+  // Judul + artis di notifikasi / layar kunci; baris lirik yang sedang dinyanyikan ikut tampil di sana
+  const notifLine =
+    notifLyrics && isPlaying && Array.isArray(lyrics) && activeLineIndex >= 0 && lyrics.length > 0
+      ? String(lyrics[activeLineIndex]?.text || '').trim()
+      : '';
+  useEffect(() => {
+    if (!currentTrack) return;
+    (async () => {
+      try {
+        await MediaSession.setMetadata({
+          title: currentTrack.title || '',
+          artist: notifLine ? `♪ ${notifLine}` : currentTrack.artist || '',
+          album: notifLine ? currentTrack.artist || '' : currentTrack.album || '',
+          artwork: currentTrack.cover ? [{ src: currentTrack.cover, sizes: '512x512', type: 'image/jpeg' }] : [],
+        });
+      } catch {
+        // plugin / browser tidak mendukung, abaikan
+      }
+    })();
+  }, [currentTrack, notifLine]);
+
   // Kontrol layar kunci / notifikasi ala Spotify (Media Session)
   const timeRef = useRef(0);
   timeRef.current = currentTime;
@@ -1530,12 +1553,6 @@ export default function MusicPlayer() {
     let cancelled = false;
     (async () => {
       try {
-        await MediaSession.setMetadata({
-          title: currentTrack.title || '',
-          artist: currentTrack.artist || '',
-          album: currentTrack.album || '',
-          artwork: currentTrack.cover ? [{ src: currentTrack.cover, sizes: '512x512', type: 'image/jpeg' }] : [],
-        });
         if (cancelled) return;
         await MediaSession.setActionHandler({ action: 'play' }, () => {
           if (!isPlayingRef.current) handleTogglePlayPause();
@@ -1588,10 +1605,11 @@ export default function MusicPlayer() {
       mode: playbackMode,
       repeatMode,
       shuffle: shuffleOn,
-      island: islandOn,
+      islandOn,
       islandLyrics,
+      notifLyrics,
     });
-  }, [likedIds, suitId, volume, playbackMode, repeatMode, shuffleOn, islandOn, islandLyrics]);
+  }, [likedIds, suitId, volume, playbackMode, repeatMode, shuffleOn, islandOn, islandLyrics, notifLyrics]);
 
   useEffect(() => {
     writeSaved('spideyfy-history', history);
@@ -2156,6 +2174,8 @@ export default function MusicPlayer() {
                     setIslandOn={setIslandOn}
                     islandLyrics={islandLyrics}
                     setIslandLyrics={setIslandLyrics}
+                    notifLyrics={notifLyrics}
+                    setNotifLyrics={setNotifLyrics}
                   />
                 )}
 
