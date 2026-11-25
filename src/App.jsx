@@ -1723,14 +1723,12 @@ export default function MusicPlayer() {
         </div>
 
         <div className="flex items-center gap-3">
-          <span
-            className={`inline-flex items-center gap-1.5 text-[11px] font-semibold ${
-              backendConnected ? 'text-emerald-400' : 'text-amber-300'
-            }`}
-          >
-            {backendConnected ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
-            <span>{backendConnected ? '/api/ytmusic Live' : 'Fallback Catalog'}</span>
-          </span>
+          {!backendConnected && (
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-300">
+              <WifiOff className="w-3.5 h-3.5" />
+              <span>Fallback Catalog</span>
+            </span>
+          )}
           <span className="tabular-nums text-neutral-300">{clockText}</span>
         </div>
       </header>
