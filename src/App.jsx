@@ -843,6 +843,9 @@ export default function MusicPlayer() {
   const volumeRef = useRef(80);
   const stepNextRef = useRef(null);
   const errorStreakRef = useRef(0);
+  const tryAlternateRef = useRef(null);
+  const triedVideosRef = useRef({});
+  const videoFixRef = useRef(readSaved('spideyfy-video-fix', {}));
   isPlayingRef.current = isPlaying;
   const playbackModeRef = useRef('audio');
   playbackModeRef.current = playbackMode;
@@ -980,23 +983,27 @@ export default function MusicPlayer() {
               errorStreakRef.current = 0;
             }
           },
-          onError: (ev) => {
-            const blocked = ev.data === 101 || ev.data === 150;
-            setStatusMessage(
-              blocked
-                ? 'Lagu ini tidak boleh diputar di luar YouTube, lanjut ke lagu berikutnya'
-                : 'Lagu gagal dimuat, lanjut ke lagu berikutnya'
-            );
-            errorStreakRef.current += 1;
-            if (errorStreakRef.current >= 5) {
-              // Jangan loncat-loncat tanpa henti kalau banyak lagu berturut-turut gagal
-              errorStreakRef.current = 0;
-              isPlayingRef.current = false;
-              setIsPlaying(false);
-              setStatusMessage('Beberapa lagu berturut-turut gagal diputar. Cek koneksi atau coba lagu lain.');
-              return;
+          onError: () => {
+            const skip = () => {
+              errorStreakRef.current += 1;
+              if (errorStreakRef.current >= 5) {
+                // Jangan loncat-loncat tanpa henti kalau banyak lagu berturut-turut gagal
+                errorStreakRef.current = 0;
+                isPlayingRef.current = false;
+                setIsPlaying(false);
+                setStatusMessage('Beberapa lagu berturut-turut gagal diputar. Cek koneksi atau coba lagu lain.');
+                return;
+              }
+              setStatusMessage('Lagu ini tidak bisa diputar, lanjut ke lagu berikutnya');
+              if (stepNextRef.current) stepNextRef.current(true);
+            };
+            const tr = currentTrackRef.current;
+            if (tr && tryAlternateRef.current) {
+              setStatusMessage('Lagu ini diblokir YouTube, mencari versi lain…');
+              tryAlternateRef.current(tr).then((ok) => { if (!ok) skip(); }).catch(skip);
+            } else {
+              skip();
             }
-            if (stepNextRef.current) stepNextRef.current(true);
           },
         },
       });
@@ -1262,8 +1269,14 @@ export default function MusicPlayer() {
     }
   }, [currentTrack, loadLyricsForTrack]);
 
-  const handleSelectTrack = useCallback((track, autoPlay = true, queue = null) => {
-    if (!track) return;
+  const handleSelectTrack = useCallback((rawTrack, autoPlay = true, queue = null) => {
+    if (!rawTrack) return;
+    // Kalau lagu ini pernah diblokir, langsung pakai versi pengganti yang sudah ketemu
+    const fixedId = videoFixRef.current[rawTrack.origVideoId || rawTrack.videoId];
+    const track =
+      fixedId && fixedId !== rawTrack.videoId
+        ? { ...rawTrack, videoId: fixedId, origVideoId: rawTrack.origVideoId || rawTrack.videoId }
+        : rawTrack;
     if (queue !== queueRef.current) {
       shuffleBagRef.current = [];
       shuffleHistoryRef.current = [];
@@ -1289,6 +1302,62 @@ export default function MusicPlayer() {
       setIsPlaying(true);
     }
   }, [currentTrack]);
+
+  // Lagu diblokir / gagal diputar: cari versi lain (video biasa, lyric video, dll) lalu coba lagi
+  tryAlternateRef.current = async (tr) => {
+    const key = tr.origVideoId || tr.videoId;
+    if (!triedVideosRef.current[key]) triedVideosRef.current[key] = new Set([key]);
+    const tried = triedVideosRef.current[key];
+    tried.add(tr.videoId);
+    const swap = (videoId) => {
+      tried.add(videoId);
+      videoFixRef.current[key] = videoId;
+      writeSaved('spideyfy-video-fix', videoFixRef.current);
+      setCurrentTrack((prev) => (prev && prev.id === tr.id ? { ...prev, videoId, origVideoId: key } : prev));
+    };
+    const giveUp = () => {
+      delete videoFixRef.current[key];
+      writeSaved('spideyfy-video-fix', videoFixRef.current);
+      triedVideosRef.current[key] = new Set([key]);
+      return false;
+    };
+    const saved = videoFixRef.current[key];
+    if (saved && !tried.has(saved)) {
+      swap(saved);
+      return true;
+    }
+    if (tried.size > 6) return giveUp();
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch(
+        `/api/ytmusic?alt=1&q=${encodeURIComponent(`${tr.title} ${tr.artist}`)}`,
+        { signal: controller.signal }
+      );
+      clearTimeout(timer);
+      if (!res.ok) return giveUp();
+      const data = await res.json();
+      const norm = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const title = norm(tr.title);
+      const artist = norm(String(tr.artist || '').split(',')[0]);
+      const bad = ['cover', 'karaoke', 'live', 'remix', 'instrumental', 'slowed', 'sped', 'nightcore', 'reverb', 'reaction'];
+      const cands = (data.alternatives || [])
+        .filter((c) => c && c.videoId && !tried.has(c.videoId) && norm(c.title).includes(title))
+        .map((c) => {
+          const t = norm(c.title);
+          let score = Math.abs((Number(c.durationSec) || 0) - (Number(tr.durationSec) || 0));
+          if (artist && !norm(c.artist).includes(artist) && !t.includes(artist)) score += 60;
+          if (bad.some((w) => t.includes(w) && !title.includes(w))) score += 200;
+          return { c, score };
+        })
+        .sort((a, b) => a.score - b.score);
+      if (!cands.length) return giveUp();
+      swap(cands[0].c.videoId);
+      return true;
+    } catch {
+      return giveUp();
+    }
+  };
 
   const handleTogglePlayPause = useCallback(() => {
     const next = !isPlayingRef.current;
