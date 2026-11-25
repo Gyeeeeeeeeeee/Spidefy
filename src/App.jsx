@@ -36,6 +36,7 @@ import {
   Shuffle,
 } from 'lucide-react';
 import { PlaylistLibrary, PlaylistDetail } from './PlaylistsView.jsx';
+import DynamicIsland from './DynamicIsland.jsx';
 
 // Paksa YouTube IFrame & WebView mengira layar selalu aktif (tidak pernah hidden/pause)
 if (typeof document !== 'undefined') {
@@ -715,7 +716,7 @@ function askBackgroundPermission() {
   return true;
 }
 
-function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, backendConnected }) {
+function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, backendConnected, islandOn, setIslandOn, islandLyrics, setIslandLyrics }) {
   return (
     <div className="space-y-4 pb-4">
       <div>
@@ -735,6 +736,38 @@ function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, 
           {['audio', 'video'].map((m) => (
             <button key={m} type="button" onClick={() => setPlaybackMode(m)} className="rounded-xl py-2.5 text-xs font-bold capitalize text-white border" style={playbackMode === m ? { background: suit.primary, borderColor: suit.primary } : { background: 'rgba(255,255,255,0.06)', borderColor: 'transparent' }}>
               {m}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <h3 className="text-sm font-black italic text-white mb-2">Dynamic Island</h3>
+        <div className="rounded-xl bg-white/[0.05] divide-y divide-white/10">
+          {[
+            { label: 'Tampilkan Dynamic Island', sub: 'Pil melayang di atas layar berisi lagu yang diputar. Ketuk untuk membuka kontrol.', on: islandOn, set: setIslandOn },
+            { label: 'Tampilkan lirik di Island', sub: 'Baris lirik yang sedang dinyanyikan muncul di dalam pil.', on: islandLyrics, set: setIslandLyrics, disabled: !islandOn },
+          ].map((row) => (
+            <button
+              key={row.label}
+              type="button"
+              disabled={row.disabled}
+              onClick={() => row.set(!row.on)}
+              className="w-full flex items-center gap-3 px-3 py-3 text-left disabled:opacity-40"
+              aria-pressed={row.on}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block text-xs font-bold text-white">{row.label}</span>
+                <span className="block text-[11px] text-neutral-400 mt-0.5">{row.sub}</span>
+              </span>
+              <span
+                className="relative w-11 h-6 rounded-full shrink-0 transition-colors"
+                style={{ backgroundColor: row.on ? suit.primary : 'rgba(255,255,255,0.18)' }}
+              >
+                <span
+                  className="absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all"
+                  style={{ left: row.on ? 22 : 2 }}
+                />
+              </span>
             </button>
           ))}
         </div>
@@ -790,6 +823,8 @@ export default function MusicPlayer() {
   // Playback state (Audio mode uses Web Audio / synced timer fallback; Video mode uses YouTube IFrame)
   const [currentTrack, setCurrentTrack] = useState(RESTORED_TRACK || FALLBACK_CATALOG.songs[0]);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [islandOn, setIslandOn] = useState(SAVED_PREFS.island !== false);
+  const [islandLyrics, setIslandLyrics] = useState(SAVED_PREFS.islandLyrics !== false);
   const [playbackMode, setPlaybackMode] = useState(SAVED_PREFS.mode === 'video' ? 'video' : 'audio'); // 'audio' | 'video'
   const [currentTime, setCurrentTime] = useState(RESTORED_TIME);
   const [duration, setDuration] = useState(
@@ -1553,8 +1588,10 @@ export default function MusicPlayer() {
       mode: playbackMode,
       repeatMode,
       shuffle: shuffleOn,
+      island: islandOn,
+      islandLyrics,
     });
-  }, [likedIds, suitId, volume, playbackMode, repeatMode, shuffleOn]);
+  }, [likedIds, suitId, volume, playbackMode, repeatMode, shuffleOn, islandOn, islandLyrics]);
 
   useEffect(() => {
     writeSaved('spideyfy-history', history);
@@ -1844,6 +1881,22 @@ export default function MusicPlayer() {
         </g>
       </svg>
 
+      {islandOn && (
+        <DynamicIsland
+          suit={suit}
+          track={currentTrack}
+          isPlaying={isPlaying}
+          lyrics={lyrics}
+          activeIndex={activeLineIndex}
+          currentTime={currentTime}
+          duration={duration}
+          showLyrics={islandLyrics}
+          onTogglePlay={handleTogglePlayPause}
+          onNext={() => handleStepTrack(1)}
+          onPrev={() => handleStepTrack(-1)}
+        />
+      )}
+
       {/* macOS Top Menu Bar */}
       <header className="relative z-20 h-7 px-3.5 flex items-center justify-between bg-[#0b0b10]/75 backdrop-blur-xl border-b border-white/[0.08] text-[11.5px] font-medium text-neutral-200 shrink-0">
         <div className="flex items-center gap-2.5">
@@ -2099,6 +2152,10 @@ export default function MusicPlayer() {
                     playbackMode={playbackMode}
                     setPlaybackMode={setPlaybackMode}
                     backendConnected={backendConnected}
+                    islandOn={islandOn}
+                    setIslandOn={setIslandOn}
+                    islandLyrics={islandLyrics}
+                    setIslandLyrics={setIslandLyrics}
                   />
                 )}
 
