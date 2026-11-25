@@ -843,6 +843,8 @@ export default function MusicPlayer() {
   const volumeRef = useRef(80);
   const stepNextRef = useRef(null);
   const errorStreakRef = useRef(0);
+  const stuckRef = useRef(0);
+  const loadedVideoRef = useRef('');
   const tryAlternateRef = useRef(null);
   const triedVideosRef = useRef({});
   const videoFixRef = useRef(readSaved('spideyfy-video-fix', {}));
@@ -926,11 +928,15 @@ export default function MusicPlayer() {
     const mountPlayer = () => {
       if (!window.YT || !window.YT.Player || !ytContainerRef.current) return;
       if (ytPlayerRef.current && typeof ytPlayerRef.current.loadVideoById === 'function') {
+        // Sudah dimuat langsung saat lagu ditekan (supaya lolos aturan autoplay browser)
+        if (loadedVideoRef.current === currentTrack.videoId) return;
         const args = { videoId: currentTrack.videoId, startSeconds: 0 };
         if (isPlayingRef.current) ytPlayerRef.current.loadVideoById(args);
         else ytPlayerRef.current.cueVideoById(args);
+        loadedVideoRef.current = currentTrack.videoId;
         return;
       }
+      loadedVideoRef.current = currentTrack.videoId;
 
       const mountEl = document.createElement('div');
       mountEl.style.width = '100%';
@@ -1026,10 +1032,27 @@ export default function MusicPlayer() {
   useEffect(() => {
     const iv = setInterval(() => {
       try {
+        if (!isPlayingRef.current) {
+          stuckRef.current = 0;
+          return;
+        }
         const pl = ytPlayerRef.current;
-        if (!isPlayingRef.current || !pl || typeof pl.getPlayerState !== 'function') return;
-        const st = pl.getPlayerState();
+        const ready = pl && typeof pl.getPlayerState === 'function';
+        const st = ready ? pl.getPlayerState() : null;
         const away = window.__spAway && window.__spAway();
+        // Terlihat "memutar" tapi pemutar tidak pernah mulai (autoplay diblokir / pemutar belum siap)
+        if (!away && (!ready || st === -1 || st === 5)) {
+          stuckRef.current += 1;
+          if (stuckRef.current >= 6) {
+            stuckRef.current = 0;
+            isPlayingRef.current = false;
+            setIsPlaying(false);
+            setStatusMessage('Pemutar belum bisa mulai sendiri. Tekan tombol play sekali lagi.');
+          }
+        } else {
+          stuckRef.current = 0;
+        }
+        if (!ready) return;
         if ((away || playbackModeRef.current === 'audio') && (st === 2 || st === 5 || st === -1)) {
           const now = Date.now();
           if (now - (window.__spLastResume || 0) > 800) {
@@ -1064,14 +1087,6 @@ export default function MusicPlayer() {
         const ytDur = ytPlayerRef.current.getDuration() || duration;
         setCurrentTime(ytCur);
         if (ytDur > 0) setDuration(ytDur);
-      } else {
-        setCurrentTime((prev) => {
-          const next = prev + 0.5;
-          if (next >= duration) {
-            return 0;
-          }
-          return next;
-        });
       }
     }, 500);
     return () => clearInterval(interval);
@@ -1295,6 +1310,16 @@ export default function MusicPlayer() {
       return;
     }
     setCurrentTrack(track);
+    try {
+      const pl = ytPlayerRef.current;
+      if (autoPlay && pl && typeof pl.loadVideoById === 'function' && track.videoId) {
+        isPlayingRef.current = true;
+        pl.loadVideoById({ videoId: track.videoId, startSeconds: 0 });
+        loadedVideoRef.current = track.videoId;
+      }
+    } catch {
+      // abaikan, efek pemuat akan mencoba lagi
+    }
     setCurrentTime(0);
     setDuration(track.durationSec || 180);
     setActiveLineIndex(0);
