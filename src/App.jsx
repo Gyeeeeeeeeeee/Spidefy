@@ -45,7 +45,11 @@ if (typeof document !== 'undefined') {
     const markAway = () => { if (realHidden()) lastAway = Date.now(); };
     document.addEventListener('visibilitychange', markAway, true);
     window.addEventListener('pagehide', () => { lastAway = Date.now(); }, true);
-    window.__spAway = () => realHidden() || Date.now() - lastAway < 3000;
+    window.__spAway = () => {
+      let noFocus = false;
+      try { noFocus = !document.hasFocus(); } catch { /* abaikan */ }
+      return realHidden() || noFocus || Date.now() - lastAway < 3000;
+    };
     Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
     Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
     const blockVisibility = (e) => {
@@ -825,6 +829,8 @@ export default function MusicPlayer() {
   const keepAliveRef = useRef(null);
   useEffect(() => {
     try {
+      // Di APK tidak perlu (sudah ada service latar belakang) dan malah bisa bentrok jadi suara pecah
+      if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) return;
       if (!keepAliveRef.current) {
         const sr = 8000;
         const n = sr * 2;
@@ -924,7 +930,11 @@ export default function MusicPlayer() {
                 if (!isPlayingRef.current) return;
                 const away = window.__spAway && window.__spAway();
                 if (away) {
-                  try { ev.target.playVideo(); } catch { /* abaikan */ }
+                  const now = Date.now();
+                  if (now - (window.__spLastResume || 0) > 1500) {
+                    window.__spLastResume = now;
+                    try { ev.target.playVideo(); } catch { /* abaikan */ }
+                  }
                 } else {
                   isPlayingRef.current = false;
                   setIsPlaying(false);
@@ -960,6 +970,28 @@ export default function MusicPlayer() {
       return () => clearInterval(poll);
     }
   }, [currentTrack?.videoId]);
+
+  // Penjaga: kalau seharusnya memutar tapi pemutar berhenti sendiri saat app di belakang, lanjutkan lagi
+  useEffect(() => {
+    const iv = setInterval(() => {
+      try {
+        const pl = ytPlayerRef.current;
+        if (!isPlayingRef.current || !pl || typeof pl.getPlayerState !== 'function') return;
+        const st = pl.getPlayerState();
+        const away = window.__spAway && window.__spAway();
+        if (away && (st === 2 || st === 5 || st === -1)) {
+          const now = Date.now();
+          if (now - (window.__spLastResume || 0) > 1500) {
+            window.__spLastResume = now;
+            pl.playVideo();
+          }
+        }
+      } catch {
+        // abaikan
+      }
+    }, 2000);
+    return () => clearInterval(iv);
+  }, []);
 
   // Keep YouTube volume synced
   useEffect(() => {
