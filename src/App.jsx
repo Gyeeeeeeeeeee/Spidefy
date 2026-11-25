@@ -38,6 +38,14 @@ import {
 // Paksa YouTube IFrame & WebView mengira layar selalu aktif (tidak pernah hidden/pause)
 if (typeof document !== 'undefined') {
   try {
+    const realHidden = () => {
+      try { return Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get.call(document); } catch { return false; }
+    };
+    let lastAway = 0;
+    const markAway = () => { if (realHidden()) lastAway = Date.now(); };
+    document.addEventListener('visibilitychange', markAway, true);
+    window.addEventListener('pagehide', () => { lastAway = Date.now(); }, true);
+    window.__spAway = () => realHidden() || Date.now() - lastAway < 3000;
     Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
     Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
     const blockVisibility = (e) => {
@@ -813,6 +821,38 @@ export default function MusicPlayer() {
     return () => clearInterval(timer);
   }, []);
 
+  // Audio senyap: bikin browser menganggap tab ini pemutar musik (tidak dibekukan saat layar mati)
+  const keepAliveRef = useRef(null);
+  useEffect(() => {
+    try {
+      if (!keepAliveRef.current) {
+        const sr = 8000;
+        const n = sr * 2;
+        const buf = new ArrayBuffer(44 + n);
+        const v = new DataView(buf);
+        const w = (o, t) => { for (let i = 0; i < t.length; i += 1) v.setUint8(o + i, t.charCodeAt(i)); };
+        w(0, 'RIFF'); v.setUint32(4, 36 + n, true); w(8, 'WAVE'); w(12, 'fmt ');
+        v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+        v.setUint32(24, sr, true); v.setUint32(28, sr, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+        w(36, 'data'); v.setUint32(40, n, true);
+        new Uint8Array(buf, 44).fill(128);
+        const a = new Audio(URL.createObjectURL(new Blob([buf], { type: 'audio/wav' })));
+        a.loop = true;
+        a.volume = 0.01;
+        keepAliveRef.current = a;
+      }
+      const a = keepAliveRef.current;
+      if (isPlaying) {
+        const r = a.play();
+        if (r && typeof r.catch === 'function') r.catch(() => {});
+      } else {
+        a.pause();
+      }
+    } catch {
+      // abaikan
+    }
+  }, [isPlaying]);
+
   // Load YouTube IFrame API script once
   useEffect(() => {
     if (window.YT && window.YT.Player) {
@@ -873,15 +913,27 @@ export default function MusicPlayer() {
             if (d > 0) setDuration(d);
             if (isPlayingRef.current) ev.target.playVideo();
           },
-            onReady: (ev) => {
-            ev.target.setVolume(volumeRef.current);
-            resumeSecRef.current = 0;
-            const d = ev.target.getDuration();
-            if (d > 0) setDuration(d);
-            if (isPlayingRef.current) ev.target.playVideo();
-          },
-          // <--- GANTI BLOK onStateChange YANG LAMA DENGAN KODE BAGIAN B DI SINI --->
-          onError: (ev) => {
+          onStateChange: (ev) => {
+            const S = window.YT.PlayerState;
+            if (ev.data === S.ENDED) {
+              if (stepNextRef.current) stepNextRef.current(false);
+            } else if (ev.data === S.PAUSED && isPlayingRef.current) {
+              // Dijeda browser (layar mati / pindah app) -> lanjutkan otomatis.
+              // Dijeda user dari kontrol video (app di depan) -> ikuti.
+              setTimeout(() => {
+                if (!isPlayingRef.current) return;
+                const away = window.__spAway && window.__spAway();
+                if (away) {
+                  try { ev.target.playVideo(); } catch { /* abaikan */ }
+                } else {
+                  isPlayingRef.current = false;
+                  setIsPlaying(false);
+                }
+              }, 400);
+            } else if (ev.data === S.PLAYING && !isPlayingRef.current) {
+              isPlayingRef.current = true;
+              setIsPlaying(true);
+            }
           },
           onError: (ev) => {
             const blocked = ev.data === 101 || ev.data === 150;
