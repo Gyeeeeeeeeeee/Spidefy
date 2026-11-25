@@ -556,20 +556,26 @@ function HomeView({ songs, currentTrack, isPlaying, suit, onPlay, history = [] }
   const outline = { WebkitTextStroke: `1px ${suit.primary}`, color: 'transparent' };
   return (
     <div className="space-y-5 pb-4">
-      <div className="relative overflow-hidden rounded-2xl p-4 border border-white/10" style={{ background: `linear-gradient(135deg, ${suit.orbA}, rgba(0,0,0,0.4) 70%)` }}>
-        <WebCorner color={suit.primary} />
-        <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest" style={{ color: suit.primary }}>
-          <SpiderIcon size={14} color={suit.primary} /> Your friendly neighborhood player
+      <div className="relative overflow-hidden rounded-3xl p-5 min-h-[190px] flex flex-col justify-center" style={{ border: `1px solid ${suit.primary}88`, boxShadow: `0 0 24px ${suit.glow}, inset 0 0 40px rgba(0,0,0,0.5)`, background: `linear-gradient(120deg, ${suit.orbA} 0%, rgba(8,8,16,0.95) 60%, ${suit.orbB} 100%)` }}>
+        <WebCorner color={suit.secondary} />
+        <svg className="absolute inset-x-0 bottom-0 w-full h-16 pointer-events-none" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M0 60 V38 h14 V26 h10 V38 h8 V16 h12 V38 h10 V30 h14 V38 h12 V20 h10 V38 h16 V28 h12 V38 h10 V12 h14 V38 h12 V32 h10 V38 h16 V22 h12 V38 h14 V30 h10 V38 h12 V18 h12 V38 h14 V60 Z" fill="rgba(0,0,0,0.55)" />
+        </svg>
+        <img src="/banner.png" alt="" className="absolute right-0 bottom-0 h-full max-w-[55%] object-contain pointer-events-none" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+        <div className="relative">
+          <h2 className="font-black italic uppercase text-white leading-[0.95] text-[34px] drop-shadow-[0_3px_0_rgba(0,0,0,0.6)]" style={{ transform: 'skewX(-4deg)' }}>
+            {greet},<br />Spider-Fan!
+          </h2>
+          <p className="text-[13px] font-semibold mt-2" style={{ color: suit.primary }}>Ayunan nada hari ini sudah siap.</p>
         </div>
-        <h2 className="text-xl font-black italic text-white mt-1">{greet}, Spider-Fan!</h2>
-        <p className="text-[11px] text-neutral-300 mt-0.5">Ayunan nada hari ini sudah siap.</p>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
         {quick.map((t) => (
-          <button key={t.id} type="button" onClick={() => onPlay(t)} className="flex items-center gap-2 rounded-lg bg-white/[0.08] overflow-hidden text-left active:scale-95 transition" style={{ borderLeft: `3px solid ${suit.primary}` }}>
+          <button key={t.id} type="button" onClick={() => onPlay(t)} className="flex items-center gap-2 rounded-lg bg-white/[0.08] overflow-hidden text-left active:scale-95 transition" style={{ border: `1px solid ${suit.secondary}66`, borderLeft: `3px solid ${suit.primary}` }}>
             <img src={t.cover} alt={t.title} className="w-11 h-11 object-cover shrink-0" />
-            <span className="text-[11px] font-bold text-white line-clamp-2 pr-2">{t.title}</span>
+            <span className="text-[11px] font-bold text-white line-clamp-2 flex-1">{t.title}</span>
+            <span className="mr-2 w-5 h-5 shrink-0 rounded-full bg-white/90 flex items-center justify-center"><Play size={10} className="text-black ml-px" fill="currentColor" /></span>
           </button>
         ))}
       </div>
