@@ -36,7 +36,6 @@ import {
   Shuffle,
 } from 'lucide-react';
 import { PlaylistLibrary, PlaylistDetail } from './PlaylistsView.jsx';
-import DynamicIsland from './DynamicIsland.jsx';
 
 // Paksa YouTube IFrame & WebView mengira layar selalu aktif (tidak pernah hidden/pause)
 if (typeof document !== 'undefined') {
@@ -716,7 +715,7 @@ function askBackgroundPermission() {
   return true;
 }
 
-function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, backendConnected, islandOn, setIslandOn, islandLyrics, setIslandLyrics, notifLyrics, setNotifLyrics }) {
+function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, backendConnected, notifLyrics, setNotifLyrics }) {
   return (
     <div className="space-y-4 pb-4">
       <div>
@@ -741,11 +740,9 @@ function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, 
         </div>
       </div>
       <div>
-        <h3 className="text-sm font-black italic text-white mb-2">Dynamic Island</h3>
+        <h3 className="text-sm font-black italic text-white mb-2">Notifikasi</h3>
         <div className="rounded-xl bg-white/[0.05] divide-y divide-white/10">
           {[
-            { label: 'Tampilkan Dynamic Island', sub: 'Pil melayang di atas layar berisi lagu yang diputar. Ketuk untuk membuka kontrol.', on: islandOn, set: setIslandOn },
-            { label: 'Tampilkan lirik di Island', sub: 'Baris lirik yang sedang dinyanyikan muncul di dalam pil.', on: islandLyrics, set: setIslandLyrics, disabled: !islandOn },
             { label: 'Lirik di notifikasi & layar kunci', sub: 'Baris lirik tampil di notifikasi musik, juga saat aplikasi ditutup atau layar dikunci.', on: notifLyrics, set: setNotifLyrics },
           ].map((row) => (
             <button
@@ -824,8 +821,6 @@ export default function MusicPlayer() {
   // Playback state (Audio mode uses Web Audio / synced timer fallback; Video mode uses YouTube IFrame)
   const [currentTrack, setCurrentTrack] = useState(RESTORED_TRACK || FALLBACK_CATALOG.songs[0]);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [islandOn, setIslandOn] = useState(SAVED_PREFS.islandOn === true);
-  const [islandLyrics, setIslandLyrics] = useState(SAVED_PREFS.islandLyrics !== false);
   const [notifLyrics, setNotifLyrics] = useState(SAVED_PREFS.notifLyrics !== false);
   const [playbackMode, setPlaybackMode] = useState(SAVED_PREFS.mode === 'video' ? 'video' : 'audio'); // 'audio' | 'video'
   const [currentTime, setCurrentTime] = useState(RESTORED_TIME);
@@ -1605,11 +1600,9 @@ export default function MusicPlayer() {
       mode: playbackMode,
       repeatMode,
       shuffle: shuffleOn,
-      islandOn,
-      islandLyrics,
       notifLyrics,
     });
-  }, [likedIds, suitId, volume, playbackMode, repeatMode, shuffleOn, islandOn, islandLyrics, notifLyrics]);
+  }, [likedIds, suitId, volume, playbackMode, repeatMode, shuffleOn, notifLyrics]);
 
   useEffect(() => {
     writeSaved('spideyfy-history', history);
@@ -1899,22 +1892,6 @@ export default function MusicPlayer() {
         </g>
       </svg>
 
-      {islandOn && (
-        <DynamicIsland
-          suit={suit}
-          track={currentTrack}
-          isPlaying={isPlaying}
-          lyrics={lyrics}
-          activeIndex={activeLineIndex}
-          currentTime={currentTime}
-          duration={duration}
-          showLyrics={islandLyrics}
-          onTogglePlay={handleTogglePlayPause}
-          onNext={() => handleStepTrack(1)}
-          onPrev={() => handleStepTrack(-1)}
-        />
-      )}
-
       {/* macOS Top Menu Bar */}
       <header className="relative z-20 h-7 px-3.5 flex items-center justify-between bg-[#0b0b10]/75 backdrop-blur-xl border-b border-white/[0.08] text-[11.5px] font-medium text-neutral-200 shrink-0">
         <div className="flex items-center gap-2.5">
@@ -2170,10 +2147,6 @@ export default function MusicPlayer() {
                     playbackMode={playbackMode}
                     setPlaybackMode={setPlaybackMode}
                     backendConnected={backendConnected}
-                    islandOn={islandOn}
-                    setIslandOn={setIslandOn}
-                    islandLyrics={islandLyrics}
-                    setIslandLyrics={setIslandLyrics}
                     notifLyrics={notifLyrics}
                     setNotifLyrics={setNotifLyrics}
                   />
