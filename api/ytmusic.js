@@ -18,6 +18,21 @@ export default async function handler(req, res) {
     }
 
     const q = String(req.query.q || '').trim() || 'lagu terbaru 2026';
+
+    // Mode cadangan: cari versi lain dari sebuah lagu (video biasa + lagu) untuk yang diblokir YouTube
+    if (req.query.alt) {
+      const [songs, videos] = await Promise.all([ytm.searchSongs(q), ytm.searchVideos(q)]);
+      res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=600');
+      res.status(200).json({
+        alternatives: [...videos, ...songs].map((v) => ({
+          videoId: v.videoId,
+          title: v.name,
+          artist: v.artist?.name,
+          durationSec: v.duration,
+        })),
+      });
+      return;
+    }
     const [songs, albums, artists, playlists] = await Promise.all([
       ytm.searchSongs(q),
       ytm.searchAlbums(q),
