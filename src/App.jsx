@@ -817,6 +817,8 @@ export default function MusicPlayer() {
   const volumeRef = useRef(80);
   const stepNextRef = useRef(null);
   isPlayingRef.current = isPlaying;
+  const playbackModeRef = useRef('audio');
+  playbackModeRef.current = playbackMode;
   volumeRef.current = isMuted ? 0 : volume;
 
   // Live macOS menubar clock
@@ -930,22 +932,19 @@ export default function MusicPlayer() {
             if (ev.data === S.ENDED) {
               if (stepNextRef.current) stepNextRef.current(false);
             } else if (ev.data === S.PAUSED && isPlayingRef.current) {
-              // Dijeda browser (layar mati / pindah app) -> lanjutkan otomatis.
-              // Dijeda user dari kontrol video (app di depan) -> ikuti.
+              // Tombol pause kita sendiri sudah mengubah isPlayingRef lebih dulu, jadi sampai sini
+              // berarti dijeda sistem/browser (tombol home, layar mati) -> selalu lanjutkan.
+              // Pengecualian: mode Video dan app sedang di depan (user pause dari kontrol video).
               setTimeout(() => {
                 if (!isPlayingRef.current) return;
                 const away = window.__spAway && window.__spAway();
-                if (away) {
-                  const now = Date.now();
-                  if (now - (window.__spLastResume || 0) > 1500) {
-                    window.__spLastResume = now;
-                    try { ev.target.playVideo(); } catch { /* abaikan */ }
-                  }
-                } else {
+                if (playbackModeRef.current === 'video' && !away) {
                   isPlayingRef.current = false;
                   setIsPlaying(false);
+                  return;
                 }
-              }, 400);
+                try { ev.target.playVideo(); } catch { /* abaikan */ }
+              }, 250);
             } else if (ev.data === S.PLAYING && !isPlayingRef.current) {
               isPlayingRef.current = true;
               setIsPlaying(true);
@@ -985,9 +984,9 @@ export default function MusicPlayer() {
         if (!isPlayingRef.current || !pl || typeof pl.getPlayerState !== 'function') return;
         const st = pl.getPlayerState();
         const away = window.__spAway && window.__spAway();
-        if (away && (st === 2 || st === 5 || st === -1)) {
+        if ((away || playbackModeRef.current === 'audio') && (st === 2 || st === 5 || st === -1)) {
           const now = Date.now();
-          if (now - (window.__spLastResume || 0) > 1500) {
+          if (now - (window.__spLastResume || 0) > 800) {
             window.__spLastResume = now;
             pl.playVideo();
           }
@@ -995,7 +994,7 @@ export default function MusicPlayer() {
       } catch {
         // abaikan
       }
-    }, 2000);
+    }, 1000);
     return () => clearInterval(iv);
   }, []);
 
