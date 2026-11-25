@@ -58,7 +58,7 @@ jobs:
           }
           JSON
           npx cap add android
-          sed -i 's#</manifest>#    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />\n</manifest>#' android/app/src/main/AndroidManifest.xml
+          sed -i 's#</manifest>#    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />\n</manifest>#' android/app/src/main/AndroidManifest.xml
           npx cap sync android
           # Layar penuh tapi tidak menimpa status bar / tombol navigasi: latar gelap + ikon status terang
           STYLES=android/app/src/main/res/values/styles.xml
@@ -83,6 +83,7 @@ jobs:
 
             @Override
             public void onCreate(Bundle savedInstanceState) {
+              registerPlugin(IslandPlugin.class);
               super.onCreate(savedInstanceState);
               // Android 13+: izin notifikasi harus diminta, kalau tidak widget pemutar tidak muncul
               if (android.os.Build.VERSION.SDK_INT >= 33
@@ -150,6 +151,12 @@ jobs:
             }
 
             @Override
+            public void onStart() {
+              super.onStart();
+              IslandOverlay.get(this).setForeground(true);
+            }
+
+            @Override
             public void onPause() {
               super.onPause();
               keepAwakeRepeatedly();
@@ -158,11 +165,17 @@ jobs:
             @Override
             public void onStop() {
               super.onStop();
+              IslandOverlay.get(this).setForeground(false);
               keepAwakeRepeatedly();
             }
 
             @Override
             public void onDestroy() {
+              try {
+                IslandOverlay.get(this).shutdown();
+              } catch (Exception e) {
+                // abaikan
+              }
               try {
                 if (wakeLock != null && wakeLock.isHeld()) {
                   wakeLock.release();
@@ -174,6 +187,10 @@ jobs:
             }
           }
           JAVA
+          # Plugin native Dynamic Island (overlay di atas app lain)
+          for f in IslandOverlay IslandPlugin; do
+            sed "s/__PKG__/$PKG/g" "$GITHUB_WORKSPACE/native/$f.java" > "$(dirname "$MA")/$f.java"
+          done
           fi
           echo "=== Manifest plugin latar belakang (untuk cek) ==="
           cat node_modules/@anuradev/capacitor-background-mode/android/src/main/AndroidManifest.xml || echo "plugin tidak ditemukan"
