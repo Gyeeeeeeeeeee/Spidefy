@@ -2203,7 +2203,13 @@ export default function MusicPlayer() {
               )}
 
               {/* Panel pemutar besar (HP) */}
-              <div className="lg:hidden shrink-0 rounded-2xl bg-black/45 border border-white/10 p-3.5 space-y-2.5">
+              <div className="lg:hidden shrink-0 relative isolate overflow-hidden rounded-3xl p-3.5 space-y-2.5" style={{ border: `1px solid ${suit.primary}99`, boxShadow: `0 0 22px ${suit.glow}, inset 0 0 30px rgba(0,0,0,0.6)`, background: `linear-gradient(120deg, rgba(10,6,10,0.96) 0%, ${suit.orbA} 100%)` }}>
+                <div className="absolute inset-0 -z-10 pointer-events-none" aria-hidden="true">
+                  <WebCorner color={suit.primary} />
+                  <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 opacity-[0.12]"><SpiderIcon size={170} color={suit.primary} /></div>
+                  <img src="/banner.png" alt="" className="absolute right-0 bottom-0 h-[115%] object-contain opacity-40" style={{ WebkitMaskImage: 'linear-gradient(to left, #000 35%, transparent 95%)', maskImage: 'linear-gradient(to left, #000 35%, transparent 95%)' }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                  <div className="absolute inset-x-0 bottom-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${suit.primary}, transparent)` }} />
+                </div>
                 <div className="flex items-center gap-3">
                   <img
                     src={currentTrack?.cover || FALLBACK_CATALOG.songs[0].cover}
