@@ -582,7 +582,7 @@ function HomeView({ songs, currentTrack, isPlaying, suit, onPlay, history = [] }
         <svg className="absolute inset-x-0 bottom-0 w-full h-16 pointer-events-none" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true">
           <path d="M0 60 V38 h14 V26 h10 V38 h8 V16 h12 V38 h10 V30 h14 V38 h12 V20 h10 V38 h16 V28 h12 V38 h10 V12 h14 V38 h12 V32 h10 V38 h16 V22 h12 V38 h14 V30 h10 V38 h12 V18 h12 V38 h14 V60 Z" fill="rgba(0,0,0,0.55)" />
         </svg>
-        <img src="/banner.png" alt="" className="absolute right-0 bottom-0 h-full max-w-[55%] object-contain pointer-events-none" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+        <img src="/banner-bg.jpg" alt="" className="absolute right-0 inset-y-0 h-full w-[68%] object-cover object-center pointer-events-none" style={{ WebkitMaskImage: 'linear-gradient(to right, transparent 0%, #000 55%)', maskImage: 'linear-gradient(to right, transparent 0%, #000 55%)' }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
         <div className="relative">
           <h2 className="font-black italic uppercase text-white leading-[0.95] text-[34px] drop-shadow-[0_3px_0_rgba(0,0,0,0.6)]" style={{ transform: 'skewX(-4deg)' }}>
             {greet},<br />Spider-Fan!
