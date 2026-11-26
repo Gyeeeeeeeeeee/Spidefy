@@ -16,6 +16,7 @@ import {
   Minus,
   ListPlus,
   RefreshCw,
+  Video,
 } from 'lucide-react';
 import { seedQueries } from './reco.js';
 
@@ -64,6 +65,111 @@ export function fileToCover(file, size = 512) {
   });
 }
 
+/* ---------- Video sampul (disimpan di IndexedDB, karena terlalu besar untuk localStorage) ---------- */
+
+const MEDIA_DB = 'spideyfy-media';
+const VIDEO_STORE = 'cover-videos';
+const MAX_VIDEO_MB = 30;
+const LOOP_SECONDS = 5;
+
+function openMediaDb() {
+  return new Promise((resolve, reject) => {
+    try {
+      const req = indexedDB.open(MEDIA_DB, 1);
+      req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains(VIDEO_STORE)) req.result.createObjectStore(VIDEO_STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+async function idbRun(mode, fn) {
+  const db = await openMediaDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(VIDEO_STORE, mode);
+    const req = fn(tx.objectStore(VIDEO_STORE));
+    tx.oncomplete = () => {
+      db.close();
+      resolve(req ? req.result : undefined);
+    };
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error);
+    };
+    tx.onabort = () => {
+      db.close();
+      reject(tx.error);
+    };
+  });
+}
+
+const saveCoverVideo = (id, blob) => idbRun('readwrite', (st) => st.put(blob, id));
+const loadCoverVideo = (id) => idbRun('readonly', (st) => st.get(id));
+const deleteCoverVideo = (id) => idbRun('readwrite', (st) => st.delete(id)).catch(() => {});
+
+// Video dari galeri -> gambar pratinjau (bingkai pertama, persegi) + file videonya
+function videoToCover(file, size = 512) {
+  return new Promise((resolve, reject) => {
+    if (!file || !file.type || !file.type.startsWith('video/')) {
+      reject(new Error('bukan video'));
+      return;
+    }
+    if (file.size > MAX_VIDEO_MB * 1024 * 1024) {
+      reject(new Error('terlalu besar'));
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const v = document.createElement('video');
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = 'auto';
+    const done = (fn, arg) => {
+      URL.revokeObjectURL(url);
+      fn(arg);
+    };
+    v.onerror = () => done(reject, new Error('video rusak'));
+    v.onloadeddata = () => {
+      const target = Math.min(0.5, (v.duration || 1) / 2);
+      v.onseeked = () => {
+        try {
+          const w = v.videoWidth;
+          const h = v.videoHeight;
+          const side = Math.min(w, h);
+          const canvas = document.createElement('canvas');
+          canvas.width = size;
+          canvas.height = size;
+          canvas.getContext('2d').drawImage(v, (w - side) / 2, (h - side) / 2, side, side, 0, 0, size, size);
+          done(resolve, { poster: canvas.toDataURL('image/jpeg', 0.82), blob: file, duration: v.duration || 0 });
+        } catch (e) {
+          done(reject, e);
+        }
+      };
+      v.currentTime = target;
+    };
+    v.src = url;
+  });
+}
+
+// Simpan video baru (kalau ada) dan hapus yang lama. Mengembalikan id video untuk disimpan di playlist.
+async function persistCoverVideo({ videoBlob, keepVideo }, prevId) {
+  let id = keepVideo ? prevId || null : null;
+  if (videoBlob) {
+    const nid = `cv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    try {
+      await saveCoverVideo(nid, videoBlob);
+      id = nid;
+    } catch {
+      id = null; // penyimpanan penuh/tidak tersedia: tetap pakai gambar pratinjau saja
+    }
+  }
+  if (prevId && prevId !== id) deleteCoverVideo(prevId);
+  return id;
+}
+
 function totalDurationLabel(tracks) {
   const total = tracks.reduce((sum, t) => sum + (Number(t.durationSec) || 0), 0);
   const h = Math.floor(total / 3600);
@@ -76,11 +182,53 @@ function totalDurationLabel(tracks) {
 
 /* ---------- Sampul playlist ---------- */
 
-export function PlaylistCover({ pl, suit, className = '', iconSize = 28 }) {
+export function PlaylistCover({ pl, suit, className = '', iconSize = 28, animated = false, videoBlob = null }) {
   const tracks = pl.tracks || [];
   const covers = tracks.map((t) => t.cover).filter(Boolean);
+  const [videoUrl, setVideoUrl] = useState(null);
+
+  // Video sampul dimuat dari IndexedDB hanya di tampilan besar (animated), atau langsung dari file yang baru dipilih
+  useEffect(() => {
+    let dead = false;
+    let url = null;
+    if (videoBlob) {
+      url = URL.createObjectURL(videoBlob);
+      setVideoUrl(url);
+    } else if (animated && pl.coverVideoId) {
+      loadCoverVideo(pl.coverVideoId)
+        .then((blob) => {
+          if (dead || !blob) return;
+          url = URL.createObjectURL(blob);
+          setVideoUrl(url);
+        })
+        .catch(() => {});
+    } else {
+      setVideoUrl(null);
+    }
+    return () => {
+      dead = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [animated, pl.coverVideoId, videoBlob]);
+
   let inner;
-  if (pl.cover) {
+  if (videoUrl) {
+    inner = (
+      <video
+        src={videoUrl}
+        poster={pl.cover || undefined}
+        autoPlay
+        muted
+        loop
+        playsInline
+        className="w-full h-full object-cover"
+        // Hanya 5 detik pertama yang diulang
+        onTimeUpdate={(e) => {
+          if (e.currentTarget.currentTime >= LOOP_SECONDS) e.currentTarget.currentTime = 0;
+        }}
+      />
+    );
+  } else if (pl.cover) {
     inner = <img src={pl.cover} alt="" className="w-full h-full object-cover" />;
   } else if (covers.length >= 4) {
     inner = (
@@ -111,6 +259,8 @@ function PlaylistEditor({ suit, initial, title, saveLabel, onSave, onClose }) {
   const [name, setName] = useState(initial.name || '');
   const [desc, setDesc] = useState(initial.desc || '');
   const [cover, setCover] = useState(initial.cover || null);
+  const [videoBlob, setVideoBlob] = useState(null); // video baru yang baru dipilih
+  const [keepVideo, setKeepVideo] = useState(!!initial.coverVideoId); // video lama tetap dipakai
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const fileRef = useRef(null);
@@ -122,15 +272,28 @@ function PlaylistEditor({ suit, initial, title, saveLabel, onSave, onClose }) {
     setBusy(true);
     setError('');
     try {
-      setCover(await fileToCover(file));
-    } catch {
-      setError('Foto tidak bisa dibuka, coba foto lain.');
+      if (file.type && file.type.startsWith('video/')) {
+        const v = await videoToCover(file);
+        setCover(v.poster);
+        setVideoBlob(v.blob);
+        setKeepVideo(false);
+      } else {
+        setCover(await fileToCover(file));
+        setVideoBlob(null);
+        setKeepVideo(false);
+      }
+    } catch (err) {
+      setError(
+        err && err.message === 'terlalu besar'
+          ? `Video terlalu besar (maks ${MAX_VIDEO_MB} MB). Pilih video yang lebih pendek.`
+          : 'File tidak bisa dibuka, coba foto atau video lain.'
+      );
     } finally {
       setBusy(false);
     }
   };
 
-  const previewPl = { cover, tracks: initial.tracks || [] };
+  const previewPl = { cover, tracks: initial.tracks || [], coverVideoId: keepVideo ? initial.coverVideoId : null };
 
   return (
     <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/80" onClick={onClose}>
@@ -151,33 +314,42 @@ function PlaylistEditor({ suit, initial, title, saveLabel, onSave, onClose }) {
             onClick={() => fileRef.current && fileRef.current.click()}
             className="relative w-44 h-44 rounded-xl active:scale-95 transition"
             style={{ boxShadow: `0 0 24px ${suit.glow}` }}
-            aria-label="Pilih foto dari galeri"
+            aria-label="Pilih foto atau video dari galeri"
           >
-            <PlaylistCover pl={previewPl} suit={suit} className="w-full h-full rounded-xl" iconSize={56} />
+            <PlaylistCover pl={previewPl} suit={suit} className="w-full h-full rounded-xl" iconSize={56} animated videoBlob={videoBlob} />
             <span className="absolute inset-0 rounded-xl bg-black/35 flex flex-col items-center justify-center gap-1 text-white">
               <ImagePlus className="w-7 h-7" />
-              <span className="text-[11px] font-bold">{busy ? 'Memproses…' : 'Pilih foto'}</span>
+              <span className="text-[11px] font-bold">{busy ? 'Memproses…' : 'Pilih foto / video'}</span>
             </span>
           </button>
-          <input ref={fileRef} type="file" accept="image/*" onChange={pick} className="hidden" />
+          <input ref={fileRef} type="file" accept="image/*,video/*" onChange={pick} className="hidden" />
           <div className="flex gap-2">
             <button
               type="button"
               onClick={() => fileRef.current && fileRef.current.click()}
               className="px-3.5 py-1.5 rounded-full text-xs font-bold text-white bg-white/10 active:scale-95"
             >
-              Ambil dari galeri
+              Foto / video galeri
             </button>
             {cover && (
               <button
                 type="button"
-                onClick={() => setCover(null)}
+                onClick={() => {
+                  setCover(null);
+                  setVideoBlob(null);
+                  setKeepVideo(false);
+                }}
                 className="px-3.5 py-1.5 rounded-full text-xs font-bold text-neutral-300 bg-white/5 active:scale-95"
               >
-                Hapus foto
+                Hapus sampul
               </button>
             )}
           </div>
+          {(videoBlob || keepVideo) && (
+            <p className="flex items-center gap-1 text-[11px] text-neutral-300">
+              <Video className="w-3.5 h-3.5" /> Video sampul aktif, 5 detik pertama diputar berulang
+            </p>
+          )}
           {error && <p className="text-[11px] text-red-400">{error}</p>}
         </div>
 
@@ -203,7 +375,10 @@ function PlaylistEditor({ suit, initial, title, saveLabel, onSave, onClose }) {
         <button
           type="button"
           disabled={!name.trim() || busy}
-          onClick={() => onSave({ name: name.trim(), desc: desc.trim(), cover })}
+          onClick={async () => {
+            setBusy(true);
+            await onSave({ name: name.trim(), desc: desc.trim(), cover, videoBlob, keepVideo });
+          }}
           className="w-full py-3 rounded-full text-sm font-extrabold text-white active:scale-[0.98] disabled:opacity-40"
           style={{ backgroundColor: suit.primary, boxShadow: `0 0 18px ${suit.glow}` }}
         >
@@ -216,22 +391,58 @@ function PlaylistEditor({ suit, initial, title, saveLabel, onSave, onClose }) {
 
 /* ---------- Tambah lagu ke playlist ---------- */
 
-const TASTE_CHIPS = [
-  { label: 'Pop Indonesia', qs: ['lagu pop indonesia hits'] },
-  { label: 'Galau', qs: ['lagu galau indonesia'] },
-  { label: 'Santai', qs: ['lagu santai chill'] },
-  { label: 'Semangat', qs: ['lagu semangat workout'] },
-  { label: 'Hip-hop', qs: ['hip hop hits'] },
-  { label: 'Rock', qs: ['rock hits'] },
-  { label: 'Lo-fi', qs: ['lofi chill beats'] },
-  { label: 'Akustik', qs: ['akustik cover indonesia'] },
-  { label: 'Dangdut', qs: ['dangdut populer'] },
-  { label: 'K-Pop', qs: ['kpop hits'] },
-  { label: 'Jazz', qs: ['jazz santai'] },
-  { label: 'EDM', qs: ['edm party hits'] },
-  { label: 'Anime', qs: ['anime opening songs'] },
-  { label: 'Religi', qs: ['lagu religi islami'] },
+// Genre dikelompokkan per kategori supaya gampang dicari. Tiap genre punya beberapa kata kunci,
+// tombol "Segarkan" berganti ke kata kunci berikutnya sehingga hasilnya selalu baru.
+const GENRE_GROUPS = [
+  {
+    title: 'Indonesia',
+    items: [
+      { label: 'Pop Indonesia', qs: ['lagu pop indonesia hits', 'pop indonesia terbaru', 'lagu pop indonesia 2000an'] },
+      { label: 'Indie Indonesia', qs: ['indie indonesia', 'lagu indie senja', 'indie folk indonesia'] },
+      { label: 'Dangdut', qs: ['dangdut populer', 'dangdut koplo terbaru', 'dangdut lawas'] },
+      { label: 'Koplo & Campursari', qs: ['dj koplo terbaru', 'campursari populer', 'denny caknan guyon waton'] },
+      { label: 'Rock Indonesia', qs: ['rock indonesia legendaris', 'band rock indonesia', 'slow rock indonesia'] },
+      { label: 'Hip-hop Indonesia', qs: ['rap indonesia hits', 'hip hop indonesia terbaru', 'rapper indonesia'] },
+      { label: 'Religi', qs: ['lagu religi islami', 'sholawat populer', 'nasyid terbaru'] },
+      { label: 'Lagu Daerah', qs: ['lagu daerah populer', 'lagu sunda populer', 'lagu minang populer'] },
+      { label: 'Akustik', qs: ['akustik cover indonesia', 'cover akustik santai', 'live akustik indonesia'] },
+      { label: 'Nostalgia', qs: ['lagu indonesia 90an', 'lagu nostalgia 2000an indonesia', 'lagu lawas indonesia'] },
+    ],
+  },
+  {
+    title: 'Mood',
+    items: [
+      { label: 'Galau', qs: ['lagu galau indonesia', 'lagu patah hati', 'lagu sedih indonesia'] },
+      { label: 'Santai', qs: ['lagu santai chill', 'lagu santai sore hari', 'chill vibes indonesia'] },
+      { label: 'Semangat', qs: ['lagu semangat workout', 'lagu penyemangat pagi', 'gym motivation songs'] },
+      { label: 'Romantis', qs: ['lagu romantis indonesia', 'love songs terbaik', 'lagu cinta manis'] },
+      { label: 'Fokus & Belajar', qs: ['musik fokus belajar', 'study music instrumental', 'musik konsentrasi kerja'] },
+      { label: 'Pengantar Tidur', qs: ['musik pengantar tidur', 'sleep music relaxing', 'lagu tidur tenang'] },
+      { label: 'Perjalanan', qs: ['lagu perjalanan road trip', 'lagu naik motor santai', 'driving songs'] },
+      { label: 'Pesta', qs: ['lagu pesta party hits', 'lagu joget viral', 'dance party songs'] },
+    ],
+  },
+  {
+    title: 'Dunia',
+    items: [
+      { label: 'Pop', qs: ['pop hits', 'top pop songs', 'pop terbaru global'] },
+      { label: 'Hip-hop', qs: ['hip hop hits', 'rap hits terbaru', 'old school hip hop'] },
+      { label: 'R&B', qs: ['r&b hits', 'rnb slow jam', 'neo soul'] },
+      { label: 'Rock', qs: ['rock hits', 'classic rock songs', 'alternative rock'] },
+      { label: 'Metal', qs: ['metal hits', 'heavy metal klasik', 'metalcore'] },
+      { label: 'EDM', qs: ['edm party hits', 'house music hits', 'electronic dance remix'] },
+      { label: 'Lo-fi', qs: ['lofi chill beats', 'lofi hip hop', 'lofi study'] },
+      { label: 'Jazz', qs: ['jazz santai', 'smooth jazz', 'jazz klasik'] },
+      { label: 'Country & Folk', qs: ['country hits', 'folk acoustic songs', 'americana'] },
+      { label: 'Reggae', qs: ['reggae hits', 'reggae santai', 'ska reggae indonesia'] },
+      { label: 'Klasik', qs: ['musik klasik populer', 'piano klasik', 'orchestra soundtrack'] },
+      { label: 'K-Pop', qs: ['kpop hits', 'kpop terbaru', 'kpop girl group'] },
+      { label: 'J-Pop & Anime', qs: ['anime opening songs', 'jpop hits', 'anime ending songs'] },
+      { label: 'Latin', qs: ['latin hits', 'reggaeton hits', 'bachata populer'] },
+    ],
+  },
 ];
+
 
 function toSong(item) {
   const vid = item && (item.videoId || item.id);
@@ -288,6 +499,8 @@ function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
   const [autoFailed, setAutoFailed] = useState(false);
   const [freshIds, setFreshIds] = useState([]);
   const [addingId, setAddingId] = useState(null);
+  const [variant, setVariant] = useState(0); // naik tiap tekan "Segarkan" pada genre
+  const [groupTab, setGroupTab] = useState(null);
   const autoRef = useRef([]);
   autoRef.current = autoList;
   const addedRef = useRef([]); // lagu yang dipilih di sesi ini, terbaru di depan
@@ -306,18 +519,28 @@ function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
     });
     const top = Object.keys(count).sort((x, y) => count[y] - count[x]).slice(0, 2);
     if (!top.length) return null;
-    return { label: 'Mirip playlist ini', qs: top.map((n) => `${n} lagu populer`) };
+    return { label: 'Mirip playlist ini', qs: top.map((n) => `${n} lagu populer`), fixed: true };
   }, [pl.tracks]);
 
-  const chips = useMemo(() => (similarChip ? [similarChip, ...TASTE_CHIPS] : TASTE_CHIPS), [similarChip]);
+  const groups = useMemo(
+    () => (similarChip ? [{ title: 'Untukmu', items: [similarChip] }, ...GENRE_GROUPS] : GENRE_GROUPS),
+    [similarChip]
+  );
+  const chips = useMemo(() => groups.flatMap((g) => g.items), [groups]);
+  const activeGroup = groups.find((g) => g.title === groupTab) || groups[0];
   const typed = q.trim();
   const mode = typed.length >= 2 ? 'search' : sel.length ? 'reco' : 'auto';
 
   const queries = useMemo(() => {
     if (mode === 'search') return [typed];
-    if (mode === 'reco') return chips.filter((c) => sel.includes(c.label)).flatMap((c) => c.qs).slice(0, 6);
+    if (mode === 'reco') {
+      return chips
+        .filter((c) => sel.includes(c.label))
+        .flatMap((c) => (c.fixed ? c.qs : [c.qs[variant % c.qs.length]]))
+        .slice(0, 6);
+    }
     return [];
-  }, [mode, typed, chips, sel]);
+  }, [mode, typed, chips, sel, variant]);
   const queryKey = queries.join('||');
 
   useEffect(() => {
@@ -519,9 +742,32 @@ function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
           )}
         </div>
         <div>
-          <div className="text-[11px] font-bold text-neutral-300 mb-1.5">Atau pilih selera tertentu</div>
-          <div className="flex gap-1.5 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
-            {chips.map((c) => {
+          <div className="text-[11px] font-bold text-neutral-300 mb-1.5">Atau pilih genre</div>
+          <div className="flex gap-1 mb-1.5 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+            {groups.map((g) => {
+              const on = g.title === activeGroup.title;
+              const picked = g.items.filter((c) => sel.includes(c.label)).length;
+              return (
+                <button
+                  key={g.title}
+                  type="button"
+                  onClick={() => setGroupTab(g.title)}
+                  aria-pressed={on}
+                  className="shrink-0 px-3 py-1 rounded-lg text-[11px] font-extrabold"
+                  style={on ? { backgroundColor: 'rgba(255,255,255,0.16)', color: '#fff' } : { color: 'rgba(255,255,255,0.55)' }}
+                >
+                  {g.title}
+                  {picked > 0 && (
+                    <span className="ml-1 px-1.5 rounded-full text-[10px]" style={{ backgroundColor: suit.primary }}>
+                      {picked}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap gap-1.5 max-h-[88px] overflow-y-auto pb-1">
+            {activeGroup.items.map((c) => {
               const on = sel.includes(c.label);
               return (
                 <button
@@ -529,7 +775,7 @@ function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
                   type="button"
                   onClick={() => toggleChip(c.label)}
                   aria-pressed={on}
-                  className="shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold text-white border"
+                  className="px-3 py-1.5 rounded-full text-[11px] font-bold text-white border"
                   style={on ? { backgroundColor: suit.primary, borderColor: suit.primary } : { backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'transparent' }}
                 >
                   {c.label}
@@ -540,9 +786,15 @@ function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
         </div>
         <div className="flex items-center justify-between -mb-1">
           <div className="text-[11px] font-bold text-neutral-400">{heading}</div>
-          {mode === 'auto' && (
-            <button type="button" onClick={regenerate} disabled={autoLoading} aria-label="Segarkan rekomendasi" className="flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-full bg-white/10 text-white active:scale-95 disabled:opacity-50">
-              <RefreshCw className={`w-3 h-3 ${autoLoading ? 'animate-spin' : ''}`} /> Segarkan
+          {(mode === 'auto' || mode === 'reco') && (
+            <button
+              type="button"
+              onClick={mode === 'reco' ? () => setVariant((v) => v + 1) : regenerate}
+              disabled={mode === 'reco' ? loading : autoLoading}
+              aria-label="Segarkan rekomendasi"
+              className="flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-full bg-white/10 text-white active:scale-95 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3 h-3 ${(mode === 'reco' ? loading : autoLoading) ? 'animate-spin' : ''}`} /> Segarkan
             </button>
           )}
         </div>
@@ -643,8 +895,9 @@ export function PlaylistLibrary({ suit, playlists, onOpen, onCreate }) {
           title="Playlist baru"
           saveLabel="Buat"
           onClose={() => setCreating(false)}
-          onSave={(data) => {
-            onCreate(data);
+          onSave={async (data) => {
+            const coverVideoId = await persistCoverVideo(data, null);
+            onCreate({ name: data.name, desc: data.desc, cover: data.cover, coverVideoId });
             setCreating(false);
           }}
         />
@@ -736,7 +989,10 @@ export function PlaylistDetail({
                   type="button"
                   onClick={() => {
                     setMenuOpen(false);
-                    if (window.confirm(`Hapus playlist "${pl.name}"?`)) onDelete(pl.id);
+                    if (window.confirm(`Hapus playlist "${pl.name}"?`)) {
+                      if (pl.coverVideoId) deleteCoverVideo(pl.coverVideoId);
+                      onDelete(pl.id);
+                    }
                   }}
                   className="w-full flex items-center gap-2.5 px-4 py-3 text-sm text-red-400 text-left active:bg-white/10"
                 >
@@ -774,6 +1030,7 @@ export function PlaylistDetail({
               suit={suit}
               className="w-56 h-56 rounded-lg"
               iconSize={72}
+              animated
             />
           </button>
         </div>
@@ -942,12 +1199,13 @@ export function PlaylistDetail({
       {showInfo && (
         <PlaylistEditor
           suit={suit}
-          initial={{ name: pl.name, desc: pl.desc || '', cover: pl.cover || null, tracks: pl.tracks }}
+          initial={{ name: pl.name, desc: pl.desc || '', cover: pl.cover || null, coverVideoId: pl.coverVideoId || null, tracks: pl.tracks }}
           title="Nama & detail"
           saveLabel="Simpan"
           onClose={() => setShowInfo(false)}
-          onSave={(data) => {
-            onUpdate(pl.id, { name: data.name, desc: data.desc, cover: data.cover });
+          onSave={async (data) => {
+            const coverVideoId = await persistCoverVideo(data, pl.coverVideoId);
+            onUpdate(pl.id, { name: data.name, desc: data.desc, cover: data.cover, coverVideoId });
             setShowInfo(false);
           }}
         />

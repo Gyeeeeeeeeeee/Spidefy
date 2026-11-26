@@ -2042,10 +2042,10 @@ export default function MusicPlayer() {
   };
 
   // Buat playlist lengkap (nama, deskripsi, foto dari galeri) lalu langsung dibuka
-  const createPlaylistFull = ({ name, desc, cover }) => {
+  const createPlaylistFull = ({ name, desc, cover, coverVideoId }) => {
     const trimmed = (name || '').trim();
     if (!trimmed) return;
-    const pl = { id: `up-${Date.now()}`, name: trimmed, desc: desc || '', cover: cover || null, tracks: [] };
+    const pl = { id: `up-${Date.now()}`, name: trimmed, desc: desc || '', cover: cover || null, coverVideoId: coverVideoId || null, tracks: [] };
     setUserPlaylists((prev) => [...prev, pl]);
     setOpenPlaylistId(pl.id);
   };
