@@ -48,6 +48,8 @@ jobs:
           JSON
           npx cap add android
           sed -i 's#</manifest>#    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />\n</manifest>#' android/app/src/main/AndroidManifest.xml
+          # Daftarkan layar lirik layar-kunci
+          sed -i 's#</application>#        <activity android:name=".LockLyricsActivity" android:exported="false" android:showWhenLocked="true" android:turnScreenOn="true" android:excludeFromRecents="true" android:launchMode="singleTask" android:taskAffinity="" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />\n    </application>#' android/app/src/main/AndroidManifest.xml
           npx cap sync android
 
           STYLES=android/app/src/main/res/values/styles.xml
@@ -167,7 +169,7 @@ jobs:
             }
           }
           JAVA
-          for f in IslandOverlay IslandPlugin; do
+          for f in IslandOverlay IslandPlugin IslandViews LockLyricsActivity; do
             sed "s/__PKG__/$PKG/g" "$GITHUB_WORKSPACE/native/$f.java" > "$(dirname "$MA")/$f.java"
           done
           fi
