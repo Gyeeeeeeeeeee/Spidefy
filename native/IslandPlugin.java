@@ -68,6 +68,21 @@ public class IslandPlugin extends Plugin {
   }
 
   @PluginMethod
+  public void setLyrics(PluginCall call) {
+    JSArray ta = call.getArray("times");
+    JSArray xa = call.getArray("texts");
+    int n = (ta == null || xa == null) ? 0 : Math.min(ta.length(), xa.length());
+    double[] times = new double[n];
+    String[] texts = new String[n];
+    for (int i = 0; i < n; i++) {
+      times[i] = ta.optDouble(i, 0.0);
+      texts[i] = xa.optString(i, "");
+    }
+    IslandOverlay.get(getContext()).setLyrics(times, texts);
+    call.resolve();
+  }
+
+  @PluginMethod
   public void update(PluginCall call) {
     Boolean playing = call.getBoolean("playing", false);
     Boolean active = call.getBoolean("active", false);

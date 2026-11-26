@@ -221,6 +221,10 @@ public class IslandOverlay {
   private ValueAnimator anim;
   private boolean hiding = false;
   private volatile double lineMs = 0;
+  // Lirik bertimestamp dari app. Baris aktif dihitung NATIVE dari posisi lagu, supaya tetap jalan
+  // saat app di-Home (JavaScript WebView sering ditahan sistem di latar belakang).
+  private volatile double[] lyricTimes = null;
+  private volatile String[] lyricTexts = null;
   private String lastLineSeen = "";
   private long lastLineAt = 0L;
   private long estSpanMs = 4000L;
@@ -236,6 +240,7 @@ public class IslandOverlay {
     public void run() {
       if (root == null) return;
       updateProgress();
+      if (lyricTimes != null) applyLyric();
       ui.postDelayed(this, 400);
     }
   };
@@ -317,6 +322,44 @@ public class IslandOverlay {
     });
   }
 
+  public void setLyrics(final double[] times, final String[] texts) {
+    ui.post(new Runnable() {
+      @Override
+      public void run() {
+        if (times == null || texts == null || times.length == 0 || times.length != texts.length) {
+          lyricTimes = null;
+          lyricTexts = null;
+        } else {
+          lyricTimes = times;
+          lyricTexts = texts;
+        }
+        doRefresh();
+        notifyObservers();
+      }
+    });
+  }
+
+  /** Baris lirik aktif menurut posisi lagu saat ini. null = tidak ada lirik bertimestamp. */
+  private String nativeLyric() {
+    double[] ts = lyricTimes;
+    String[] tx = lyricTexts;
+    if (ts == null || tx == null || ts.length == 0 || ts.length != tx.length) return null;
+    double pos = currentPos();
+    int idx = -1;
+    for (int i = 0; i < ts.length; i++) {
+      if (pos >= ts[i]) idx = i;
+      else break;
+    }
+    if (idx < 0) return "";
+    if (idx + 1 < ts.length && ts[idx + 1] > ts[idx]) {
+      lineMs = (ts[idx + 1] - ts[idx]) * 1000.0;
+    } else {
+      lineMs = 0;
+    }
+    String t = tx[idx];
+    return t == null ? "" : t.trim();
+  }
+
   /** Lama baris lirik yang sedang aktif (ms), dikirim dari app. 0 = tidak diketahui. */
   public void setLineMs(double v) {
     lineMs = v;
@@ -369,8 +412,11 @@ public class IslandOverlay {
   private void swapText(final TextView tv, String next) {
     if (tv == null) return;
     final String n = next == null ? "" : next;
-    if (n.contentEquals(tv.getText())) return;
+    Object pending = tv.getTag();
+    // sudah menjadi target (tampil, atau sedang transisi ke sana) -> tidak perlu apa-apa
+    if (pending != null ? n.equals(pending.toString()) : n.contentEquals(tv.getText())) return;
     tv.setTag(n);
+    tv.animate().setListener(null);
     tv.animate().cancel();
     if (tv.getText().length() == 0 || root == null) {
       tv.setAlpha(1f);
@@ -379,17 +425,22 @@ public class IslandOverlay {
       return;
     }
     final float shift = dp(6);
+    final boolean[] cancelled = new boolean[] { false };
     tv.animate()
-        .alpha(0f)
-        .translationY(-shift)
-        .setDuration(130)
-        .withEndAction(new Runnable() {
+        .setListener(new AnimatorListenerAdapter() {
           @Override
-          public void run() {
+          public void onAnimationCancel(Animator a) {
+            cancelled[0] = true;
+          }
+
+          @Override
+          public void onAnimationEnd(Animator a) {
+            if (cancelled[0]) return;
             Object t = tv.getTag();
             tv.setText(t == null ? "" : t.toString());
             tv.setTranslationY(shift);
             tv.animate()
+                .setListener(null)
                 .alpha(1f)
                 .translationY(0f)
                 .setDuration(260)
@@ -397,6 +448,9 @@ public class IslandOverlay {
                 .start();
           }
         })
+        .alpha(0f)
+        .translationY(-shift)
+        .setDuration(130)
         .start();
   }
 
@@ -898,11 +952,14 @@ public class IslandOverlay {
     root.invalidate();
   }
 
-  private void applyState() {
+  private void applyLyric() {
     if (root == null) return;
-    // Pil kecil menampilkan LIRIK yang sedang dinyanyikan; kalau tidak ada, judul lagu
-    // Baris lirik: pakai 'line'; kalau kosong, pakai baris tengah dari 5 baris lirik (layar kunci)
-    String lyric = line.length() > 0 ? line : (lines[2] != null ? lines[2].trim() : "");
+    // Pil kecil menampilkan LIRIK yang sedang dinyanyikan; kalau tidak ada, judul lagu.
+    // Utamakan lirik hitungan native; kalau tidak ada, pakai 'line' dari app, lalu baris tengah layar kunci.
+    String lyric = nativeLyric();
+    if (lyric == null) {
+      lyric = line.length() > 0 ? line : (lines[2] != null ? lines[2].trim() : "");
+    }
     long nowMs = SystemClock.uptimeMillis();
     if (!lyric.equals(lastLineSeen)) {
       if (lastLineAt > 0) {
@@ -917,9 +974,14 @@ public class IslandOverlay {
     if (lyricTv instanceof Marquee) ((Marquee) lyricTv).setSpanMs(span);
     String compactText = lyric.length() > 0 ? lyric : (title.length() > 0 ? title : "SpideyFy");
     swapText(compactTitle, compactText);
+    swapText(lyricTv, lyric.length() > 0 ? lyric : "\u266A");
+  }
+
+  private void applyState() {
+    if (root == null) return;
     expTitle.setText(title);
     expArtist.setText(artist);
-    swapText(lyricTv, lyric.length() > 0 ? lyric : "\u266A");
+    applyLyric();
     playIv.setType(playing ? IslandViews.PAUSE : IslandViews.PLAY);
     eqCompact.setRunning(playing);
     eqExpanded.setRunning(playing);
