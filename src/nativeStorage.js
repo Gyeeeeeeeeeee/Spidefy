@@ -1,6 +1,8 @@
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 
+const API_BASE = 'https://vercel.app';
+
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -20,7 +22,7 @@ export function isNativeStorageSupported() {
 
 // 1. Download lagu berdasarkan videoId & simpan ke penyimpanan HP
 export async function saveSongToPhone(videoId) {
-  const proxyUrl = `/api/audio?videoId=${encodeURIComponent(videoId)}`;
+  const proxyUrl = `${API_BASE}/api/audio?videoId=${encodeURIComponent(videoId)}`;
   const response = await fetch(proxyUrl);
   if (!response.ok) throw new Error('Gagal mengunduh audio dari server');
 
@@ -85,4 +87,4 @@ export async function deleteSongFromPhone(videoId) {
   } catch {
     // abaikan jika file sudah tidak ada
   }
-}
+      }
