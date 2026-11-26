@@ -1,7 +1,7 @@
 // Alamat server API (/api/ytmusic).
 // - Di browser / situs Vercel: kosong, jadi memanggil /api/ytmusic di domain yang sama.
 // - Di APK Android (Capacitor): memakai alamat Vercel di bawah ini. GANTI dengan domain project Vercel kamu.
-const VERCEL_URL = 'https://GANTI-DOMAIN-VERCEL-KAMU.vercel.app';
+const VERCEL_URL = 'https://spidefy.vercel.app';
 const isNativeApp = typeof window !== 'undefined' && !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
 export const API_BASE = isNativeApp ? VERCEL_URL : '';
 
