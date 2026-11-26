@@ -1934,6 +1934,11 @@ export default function MusicPlayer() {
       active: !!currentTrack,
       position: Number(islandTimeRef.current) || 0,
       duration: Number(durRef.current) || 0,
+      lineMs: (() => {
+        const a = Array.isArray(lyrics) ? lyrics[activeLineIndex] : null;
+        const b = Array.isArray(lyrics) ? lyrics[activeLineIndex + 1] : null;
+        return a && b && b.time > a.time ? Math.round((b.time - a.time) * 1000) : 0;
+      })(),
     }).catch(() => {});
   };
   const pushIslandRef = useRef(pushIsland);
