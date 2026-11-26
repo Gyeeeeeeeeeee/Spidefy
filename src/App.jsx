@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import { MediaSession } from '@jofr/capacitor-media-session';
 import { registerPlugin } from '@capacitor/core';
 import {
@@ -103,6 +103,69 @@ const SUITS = {
     orbB: 'rgba(226, 232, 240, 0.14)',
   },
 };
+
+/**
+ * Gaya tambahan per suit (kontras teks, efek judul, bentuk kartu, latar hero).
+ */
+const SUIT_FX = {
+  classic: {
+    light: '#ff7a7e',
+    titleFx: '0 0 18px rgba(230,36,41,0.6)',
+    cardRadius: '8px',
+    cardShadow: 'none',
+    heroBg: null,
+  },
+  miles: {
+    light: '#67e8f9',
+    titleFx: '3px 3px 0 #ef4444, 6px 6px 0 #0e7490',
+    cardRadius: '4px',
+    cardShadow: '3px 3px 0 #0e7490',
+    heroBg: 'linear-gradient(135deg, rgba(6,182,212,0.38) 0%, #07101a 60%, rgba(239,68,68,0.32) 100%)',
+  },
+  symbiote: {
+    light: '#d8b4fe',
+    titleFx: '-2px 0 #a855f7, 2px 0 #e2e8f0, 0 0 22px rgba(168,85,247,0.6)',
+    cardRadius: '12px',
+    cardShadow: 'none',
+    heroBg: 'radial-gradient(ellipse at 75% 115%, rgba(168,85,247,0.6) 0%, rgba(60,20,110,0.35) 35%, #05030a 75%)',
+  },
+};
+
+function SuitHeroArt({ suitId }) {
+  if (suitId === 'miles') {
+    return (
+      <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 350 190" preserveAspectRatio="xMaxYMid slice" aria-hidden="true">
+        <defs>
+          <pattern id="mdots" width="9" height="9" patternUnits="userSpaceOnUse"><circle cx="2.5" cy="2.5" r="1.6" fill="#67e8f9" /></pattern>
+        </defs>
+        <path d="M200 0H290L170 190H80z" fill="#ef4444" opacity="0.9" />
+        <path d="M270 0H350V50L240 190H150z" fill="#06b6d4" opacity="0.85" />
+        <rect x="200" y="120" width="150" height="70" fill="url(#mdots)" opacity="0.7" />
+        <circle cx="318" cy="24" r="4" fill="#fff" /><circle cx="300" cy="44" r="2.5" fill="#fff" /><circle cx="334" cy="52" r="2" fill="#fff" />
+        <g transform="rotate(-6 300 150)"><rect x="236" y="138" width="96" height="26" fill="#fde047" /><text x="284" y="156" textAnchor="middle" fontWeight="800" fontSize="13" fill="#0b0f1a">NEW DROP</text></g>
+      </svg>
+    );
+  }
+  if (suitId === 'symbiote') {
+    return (
+      <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 350 190" preserveAspectRatio="xMaxYMid slice" fill="none" aria-hidden="true">
+        <rect width="350" height="14" fill="#05030a" />
+        <g fill="#05030a">
+          {[[26, 30], [78, 16], [136, 46], [196, 22], [250, 40], [304, 18]].map(([x, h]) => (
+            <g key={x}><rect x={x - 4} y="8" width="8" height={h} rx="4" /><circle cx={x} cy={8 + h + 3} r="5.5" /></g>
+          ))}
+        </g>
+        <g stroke="#e2e8f0" strokeLinecap="round">
+          <path d="M350 190C300 180 290 130 250 126S200 150 170 130" strokeWidth="3" opacity="0.9" />
+          <path d="M250 126C255 100 235 90 220 70" strokeWidth="2" opacity="0.7" />
+          <path d="M300 160C330 140 330 110 350 100" strokeWidth="2.2" opacity="0.8" />
+        </g>
+        <g stroke="#a855f7" strokeWidth="1" opacity="0.5"><circle cx="330" cy="170" r="30" /><circle cx="330" cy="170" r="60" /><circle cx="330" cy="170" r="90" /></g>
+      </svg>
+    );
+  }
+  return null;
+}
 
 /**
  * Graceful Fallback Catalog (used automatically when /api/ytmusic is unreachable
@@ -625,25 +688,27 @@ function HomeView({ songs, currentTrack, isPlaying, suit, onPlay, history = [] }
   const top = songs.slice(0, 10);
   const first = top[0];
   const outline = { WebkitTextStroke: `1px ${suit.primary}`, color: 'transparent' };
+  const fx = SUIT_FX[suit.id] || SUIT_FX.classic;
   return (
     <div className="space-y-5 pb-4">
-      <div className="relative overflow-hidden rounded-3xl p-5 min-h-[190px] flex flex-col justify-center" style={{ border: `1px solid ${suit.primary}88`, boxShadow: `0 0 24px ${suit.glow}, inset 0 0 40px rgba(0,0,0,0.5)`, background: `linear-gradient(120deg, ${suit.orbA} 0%, rgba(8,8,16,0.95) 60%, ${suit.orbB} 100%)` }}>
+      <div className="relative overflow-hidden rounded-3xl p-5 min-h-[190px] flex flex-col justify-center" style={{ border: `1px solid ${suit.primary}88`, boxShadow: `0 0 24px ${suit.glow}, inset 0 0 40px rgba(0,0,0,0.5)`, background: fx.heroBg || `linear-gradient(120deg, ${suit.orbA} 0%, rgba(8,8,16,0.95) 60%, ${suit.orbB} 100%)` }}>
+        <SuitHeroArt suitId={suit.id} />
         <WebCorner color={suit.secondary} />
         <svg className="absolute inset-x-0 bottom-0 w-full h-16 pointer-events-none" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true">
           <path d="M0 60 V38 h14 V26 h10 V38 h8 V16 h12 V38 h10 V30 h14 V38 h12 V20 h10 V38 h16 V28 h12 V38 h10 V12 h14 V38 h12 V32 h10 V38 h16 V22 h12 V38 h14 V30 h10 V38 h12 V18 h12 V38 h14 V60 Z" fill="rgba(0,0,0,0.55)" />
         </svg>
         <img src="/banner-bg.jpg" alt="" className="absolute right-0 inset-y-0 h-full w-[68%] object-cover object-center pointer-events-none" style={{ WebkitMaskImage: 'linear-gradient(to right, transparent 0%, #000 55%)', maskImage: 'linear-gradient(to right, transparent 0%, #000 55%)' }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
         <div className="relative">
-          <h2 className="font-black italic uppercase text-white leading-[0.95] text-[34px] drop-shadow-[0_3px_0_rgba(0,0,0,0.6)]" style={{ transform: 'skewX(-4deg)' }}>
+          <h2 className="font-black italic uppercase text-white leading-[0.95] text-[34px] drop-shadow-[0_3px_0_rgba(0,0,0,0.6)]" style={{ transform: 'skewX(-4deg)', textShadow: fx.titleFx }}>
             {greet},<br />Spider-Fan!
           </h2>
-          <p className="text-[13px] font-semibold mt-2" style={{ color: suit.primary }}>Ayunan nada hari ini sudah siap.</p>
+          <p className="text-[13px] font-semibold mt-2" style={{ color: fx.light }}>Ayunan nada hari ini sudah siap.</p>
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
         {quick.map((t) => (
-          <button key={t.id} type="button" onClick={() => onPlay(t)} className="flex items-center gap-2 rounded-lg bg-white/[0.08] overflow-hidden text-left active:scale-95 transition" style={{ border: `1px solid ${suit.secondary}66`, borderLeft: `3px solid ${suit.primary}` }}>
+          <button key={t.id} type="button" onClick={() => onPlay(t)} className="flex items-center gap-2 rounded-lg bg-white/[0.08] overflow-hidden text-left active:scale-95 transition" style={{ border: `1px solid ${suit.secondary}66`, borderLeft: `3px solid ${suit.primary}`, borderRadius: fx.cardRadius, boxShadow: fx.cardShadow }}>
             <img src={t.cover} alt={t.title} className="w-11 h-11 object-cover shrink-0" />
             <span className="text-[11px] font-bold text-white line-clamp-2 flex-1">{t.title}</span>
             <span className="mr-2 w-5 h-5 shrink-0 rounded-full bg-white/90 flex items-center justify-center"><Play size={10} className="text-black ml-px" fill="currentColor" /></span>
@@ -995,6 +1060,21 @@ export default function MusicPlayer() {
   const searchInputRef = useRef(null);
 
   const suit = SUITS[suitId] || SUITS.classic;
+  const switchSuit = (id, ev) => {
+    if (id === suitId) return;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (!document.startViewTransition || reduce || !ev) { setSuitId(id); return; }
+    navigator.vibrate?.(15);
+    const x = ev.clientX, y = ev.clientY;
+    const t = document.startViewTransition(() => flushSync(() => setSuitId(id)));
+    t.ready.then(() => {
+      const r = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
+      document.documentElement.animate(
+        { clipPath: [`circle(0 at ${x}px ${y}px)`, `circle(${r}px at ${x}px ${y}px)`] },
+        { duration: 650, easing: 'ease-in-out', pseudoElement: '::view-transition-new(root)' }
+      );
+    }).catch(() => {});
+  };
 
   // Refs agar callback YouTube selalu membaca nilai terbaru
   const isPlayingRef = useRef(false);
@@ -2156,8 +2236,8 @@ export default function MusicPlayer() {
 
         <section className={windowClass} aria-label="SpideyFy Window">
           {/* Window Titlebar: Traffic Lights | Suit Switcher */}
-          <div className="px-3.5 sm:px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 bg-white/[0.03] border-b border-white/[0.08] shrink-0">
-            <div className="flex items-center gap-2 group">
+          <div className="px-3.5 sm:px-4 py-2.5 flex flex-wrap items-center justify-center lg:justify-between gap-2.5 bg-white/[0.03] border-b border-white/[0.08] shrink-0">
+            <div className="hidden lg:flex items-center gap-2 group">
               <button
                 type="button"
                 onClick={() => setWindowMode('closed')}
@@ -2188,20 +2268,20 @@ export default function MusicPlayer() {
             </div>
 
             {/* Suit Mode Switcher */}
-            <div className="flex items-center gap-1 p-1 rounded-full bg-black/45 border border-white/10">
+            <div className="flex items-center gap-1 p-1 rounded-full bg-black/45 border border-white/10 w-full lg:w-auto">
               {Object.values(SUITS).map((item) => {
                 const active = suitId === item.id;
                 return (
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => setSuitId(item.id)}
+                    onClick={(e) => switchSuit(item.id, e)}
                     style={
                       active
                         ? { backgroundColor: item.primary, boxShadow: `0 2px 12px ${item.glow}` }
                         : undefined
                     }
-                    className={`px-3 py-1 rounded-full text-[11px] font-bold transition-all duration-300 active:scale-95 ${
+                    className={`flex-1 lg:flex-none px-3 py-2 lg:py-1 rounded-full text-[12px] lg:text-[11px] font-bold transition-all duration-300 active:scale-95 ${
                       active ? 'text-white' : 'text-neutral-300 hover:text-white'
                     }`}
                   >
@@ -2284,6 +2364,7 @@ export default function MusicPlayer() {
               } flex-col min-h-0 min-w-0 bg-black/15 lg:border-r border-white/[0.08]`}
             >
               <div className="p-3.5 pb-2.5 space-y-2.5 border-b border-white/[0.07] shrink-0">
+                {activeCatalogTab === 'songs' && (
                 <form onSubmit={handleSearchSubmit} className="flex items-center gap-2">
                   <div className="relative flex-1">
                     <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -2327,6 +2408,7 @@ export default function MusicPlayer() {
                     {isLoadingCatalog ? <RefreshCw className="w-4 h-4 animate-spin" /> : 'Search'}
                   </button>
                 </form>
+                )}
 
                 {/* Mobile View Switcher (Songs / Albums / Artists / Playlists + Lyrics) */}
                 <div className="flex lg:hidden items-center gap-1.5 overflow-x-auto pb-0.5">
