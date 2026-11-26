@@ -23,6 +23,8 @@ import {
 import { seedQueries } from './reco.js';
 import { saveSongToPhone, getAllSavedSongIds, isNativeStorageSupported } from './nativeStorage.js';
 
+const API_BASE = 'https://vercel.app';
+
 
 /* ---------- Helpers ---------- */
 
@@ -468,7 +470,7 @@ function toSong(item) {
 }
 
 async function searchSongsOnline(query, signal) {
-  const res = await fetch(`/api/ytmusic?q=${encodeURIComponent(query)}`, { signal });
+  const res = await fetch(`${API_BASE}/api/ytmusic?q=${encodeURIComponent(query)}`, { signal });
   if (!res.ok) throw new Error('status ' + res.status);
   const data = await res.json();
   return (Array.isArray(data.songs) ? data.songs : []).map(toSong).filter(Boolean);
