@@ -1,3 +1,5 @@
+const API_BASE = 'https://vercel.app';
+
 // Pembantu rekomendasi: dipakai di beranda dan di sheet "Tambahkan lagu".
 const SUFFIX = ['lagu populer', 'terbaik', 'hits', 'terbaru', 'best songs', 'lagu pilihan', 'mix', 'favorit'];
 
@@ -42,7 +44,7 @@ export function toSong(item) {
 }
 
 export async function fetchSongs(query, signal) {
-  const res = await fetch(`/api/ytmusic?q=${encodeURIComponent(query)}`, { signal });
+  const res = await fetch(`${API_BASE}/api/ytmusic?q=${encodeURIComponent(query)}`, { signal });
   if (!res.ok) throw new Error('status ' + res.status);
   const data = await res.json();
   return (Array.isArray(data.songs) ? data.songs : []).map(toSong).filter(Boolean);

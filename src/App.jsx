@@ -40,6 +40,8 @@ import { PlaylistLibrary, PlaylistDetail } from './PlaylistsView.jsx';
 import { seedQueries, fetchSongs, mergeAlternating, shuffle, artistOf } from './reco.js';
 import { getSongFromPhone } from './nativeStorage.js';
 
+const API_BASE = 'https://vercel.app';
+
 // Paksa YouTube IFrame & WebView mengira layar selalu aktif (tidak pernah hidden/pause)
 if (typeof document !== 'undefined') {
   try {
@@ -1534,8 +1536,8 @@ export default function MusicPlayer() {
 
     try {
       const endpoint = trimmed
-        ? `/api/ytmusic?q=${encodeURIComponent(trimmed)}`
-        : '/api/ytmusic';
+        ? `${API_BASE}/api/ytmusic?q=${encodeURIComponent(trimmed)}`
+        : `${API_BASE}/api/ytmusic`;
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 4500);
 
@@ -1615,7 +1617,7 @@ export default function MusicPlayer() {
     }
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/ytmusic?suggest=${encodeURIComponent(q)}`);
+        const res = await fetch(`${API_BASE}/api/ytmusic?suggest=${encodeURIComponent(q)}`);
         if (!res.ok) throw new Error('suggest');
         const data = await res.json();
         setSuggestions((data.suggestions || []).slice(0, 6));
@@ -1718,7 +1720,7 @@ export default function MusicPlayer() {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 6000);
       const res = await fetch(
-        `/api/ytmusic?alt=1&q=${encodeURIComponent(`${tr.title} ${tr.artist}`)}`,
+        `${API_BASE}/api/ytmusic?alt=1&q=${encodeURIComponent(`${tr.title} ${tr.artist}`)}`,
         { signal: controller.signal }
       );
       clearTimeout(timer);
@@ -2840,6 +2842,9 @@ export default function MusicPlayer() {
                     <h2 className="text-base font-extrabold text-white truncate">
                       {currentTrack?.title || 'Select a Track'}
                     </h2>
+                    {offlineSrc && (
+                      <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-black tracking-wider text-white bg-white/15">OFFLINE</span>
+                    )}
                     <p className="text-xs text-neutral-400 truncate">{currentTrack?.artist || 'SpideyFy'}</p>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
