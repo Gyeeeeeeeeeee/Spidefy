@@ -70,87 +70,29 @@ public class IslandOverlay {
   }
 
   /**
-   * Teks satu baris yang berjalan halus dari kiri ke kanan baca (teks bergeser ke kiri)
-   * kalau terlalu panjang, supaya seluruh lirik terbaca. Tepinya memudar.
+   * Teks satu baris; kalau terlalu panjang, berjalan otomatis (marquee bawaan Android).
+   * Memakai TextView standar tanpa gambar kustom supaya pasti tampil di jendela overlay.
    */
   private static class Marquee extends TextView {
-    private boolean ready = false;
-    private float textW = 0f;
-    private long t0 = 0L;
-    private final float d;
-    private final Paint fade = new Paint();
-    private long spanMs = 4000L;
-
-    void setSpanMs(long v) {
-      if (v > 0) spanMs = v;
-    }
-
     Marquee(Context c) {
       super(c);
-      d = c.getResources().getDisplayMetrics().density;
-      fade.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_IN));
-      ready = true;
-      resetScroll();
+      setSingleLine(true);
+      setEllipsize(TextUtils.TruncateAt.MARQUEE);
+      setMarqueeRepeatLimit(-1);
+      setHorizontallyScrolling(true);
+      setSelected(true);
+      setHorizontalFadingEdgeEnabled(true);
+      setFadingEdgeLength(Math.round(12f * c.getResources().getDisplayMetrics().density));
     }
 
+    /** Dipertahankan agar kode lain tidak berubah; marquee bawaan punya kecepatan sendiri. */
+    void setSpanMs(long v) {
+    }
+
+    // jendela overlay tidak punya fokus; marquee bawaan hanya jalan kalau view "fokus"
     @Override
-    public void setText(CharSequence t, BufferType type) {
-      super.setText(t, type);
-      if (ready) resetScroll();
-    }
-
-    private void resetScroll() {
-      textW = getPaint().measureText(getText().toString());
-      t0 = SystemClock.uptimeMillis();
-      invalidate();
-    }
-
-    @Override
-    protected void onDraw(Canvas c) {
-      if (getLayout() == null) {
-        super.onDraw(c);
-        return;
-      }
-      float W = getWidth();
-      float H = getHeight();
-      float w = W - getPaddingLeft() - getPaddingRight();
-      String s = getText().toString();
-      Paint p = getPaint();
-      p.setColor(getCurrentTextColor());
-      float base = getBaseline();
-      if (w <= 0f || textW <= w) {
-        c.drawText(s, getPaddingLeft() + (w - textW) / 2f, base, p);
-        return;
-      }
-      float range = textW - w + 10f * d;
-      long el = SystemClock.uptimeMillis() - t0;
-      // Jalan selama baris lirik ini dinyanyikan, supaya selesai terbaca sebelum baris berikutnya
-      float span = (float) spanMs;
-      float hold = Math.min(600f, span * 0.15f);
-      float avail = Math.max(500f, span * 0.88f - hold - 150f);
-      float minDur = range / (150f * d) * 1000f; // tidak lebih cepat dari ini
-      float maxDur = range / (22f * d) * 1000f;  // tidak lebih lambat dari ini
-      float dur = Math.max(minDur, Math.min(maxDur, avail));
-      float f = el <= hold ? 0f : Math.min(1f, (el - hold) / dur);
-      float e = f * f * (3f - 2f * f);
-      float x = getPaddingLeft() - range * e;
-
-      int sc = c.saveLayer(0f, 0f, W, H, null);
-      c.drawText(s, x, base, p);
-      float edge = Math.min(16f * d, W / 4f);
-      float la = Math.min(1f, e * 10f);
-      float ra = Math.min(1f, (1f - e) * 10f);
-      int[] cols = new int[] {
-          ((int) (255f * (1f - la))) << 24,
-          0xFF000000,
-          0xFF000000,
-          ((int) (255f * (1f - ra))) << 24
-      };
-      fade.setShader(new LinearGradient(0f, 0f, W, 0f, cols,
-          new float[] { 0f, edge / W, 1f - edge / W, 1f }, Shader.TileMode.CLAMP));
-      c.drawRect(0f, 0f, W, H, fade);
-      c.restoreToCount(sc);
-      if (f < 1f) postInvalidateOnAnimation();
+    public boolean isFocused() {
+      return true;
     }
   }
 
@@ -408,50 +350,14 @@ public class IslandOverlay {
     return h > 0 ? h : dp(24);
   }
 
-  /** Ganti teks dengan fade + geser tipis (halus), hanya kalau teksnya benar-benar berubah. */
+  /** Ganti teks hanya kalau benar-benar berubah; pastikan view selalu terlihat. */
   private void swapText(final TextView tv, String next) {
     if (tv == null) return;
     final String n = next == null ? "" : next;
-    Object pending = tv.getTag();
-    // sudah menjadi target (tampil, atau sedang transisi ke sana) -> tidak perlu apa-apa
-    if (pending != null ? n.equals(pending.toString()) : n.contentEquals(tv.getText())) return;
-    tv.setTag(n);
-    tv.animate().setListener(null);
-    tv.animate().cancel();
-    if (tv.getText().length() == 0 || root == null) {
-      tv.setAlpha(1f);
-      tv.setTranslationY(0f);
-      tv.setText(n);
-      return;
-    }
-    final float shift = dp(6);
-    final boolean[] cancelled = new boolean[] { false };
-    tv.animate()
-        .setListener(new AnimatorListenerAdapter() {
-          @Override
-          public void onAnimationCancel(Animator a) {
-            cancelled[0] = true;
-          }
-
-          @Override
-          public void onAnimationEnd(Animator a) {
-            if (cancelled[0]) return;
-            Object t = tv.getTag();
-            tv.setText(t == null ? "" : t.toString());
-            tv.setTranslationY(shift);
-            tv.animate()
-                .setListener(null)
-                .alpha(1f)
-                .translationY(0f)
-                .setDuration(260)
-                .setInterpolator(new DecelerateInterpolator())
-                .start();
-          }
-        })
-        .alpha(0f)
-        .translationY(-shift)
-        .setDuration(130)
-        .start();
+    if (n.contentEquals(tv.getText())) return;
+    tv.setAlpha(1f);
+    tv.setTranslationY(0f);
+    tv.setText(n);
   }
 
   private int dp(int v) {
@@ -658,8 +564,6 @@ public class IslandOverlay {
     t.setTextSize(sp);
     t.setTextColor(color);
     t.setTypeface(bold ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
-    t.setSingleLine(true);
-    t.setEllipsize(null);
     t.setIncludeFontPadding(false);
     return t;
   }
