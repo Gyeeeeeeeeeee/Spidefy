@@ -36,7 +36,7 @@ jobs:
         run: |
           mkdir cap && cd cap
           npm init -y
-          npm install @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
+          npm install @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7 @capacitor/filesystem@7
           npm install @anuradev/capacitor-background-mode --legacy-peer-deps || echo "::warning::Plugin latar belakang GAGAL dipasang"
           npm install @jofr/capacitor-media-session --legacy-peer-deps || echo "::warning::Plugin kontrol media GAGAL dipasang"
           mkdir www
