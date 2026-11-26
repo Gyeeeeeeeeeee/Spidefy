@@ -37,6 +37,7 @@ import {
   Shuffle,
 } from 'lucide-react';
 import { PlaylistLibrary, PlaylistDetail } from './PlaylistsView.jsx';
+import CoverImg from './CoverImg.jsx';
 import { seedQueries, fetchSongs, mergeAlternating, shuffle, artistOf, API_BASE } from './reco.js';
 
 // Paksa YouTube IFrame & WebView mengira layar selalu aktif (tidak pernah hidden/pause)
@@ -724,7 +725,7 @@ function RecoRow({ songs, seeds, ownedIds, currentTrack, isPlaying, suit, onPlay
       <div className="flex gap-3 overflow-x-auto pb-1">
         {list.map((t) => (
           <button key={t.id} type="button" onClick={() => onPlay(t)} className="w-28 shrink-0 text-left active:scale-95 transition">
-            <img src={t.cover} alt={t.title} className="w-28 h-28 rounded-xl object-cover" style={{ border: currentTrack?.id === t.id && isPlaying ? `2px solid ${suit.primary}` : '1px solid rgba(255,255,255,0.12)' }} />
+            <CoverImg src={t.cover} videoId={t.videoId || t.id} alt={t.title} className="w-28 h-28 rounded-xl object-cover" style={{ border: currentTrack?.id === t.id && isPlaying ? `2px solid ${suit.primary}` : '1px solid rgba(255,255,255,0.12)' }} />
             <div className="text-[11px] font-bold text-white truncate mt-1.5">{t.title}</div>
             <div className="text-[10px] text-neutral-400 truncate">{t.artist}</div>
           </button>
@@ -766,7 +767,7 @@ function HomeView({ songs, currentTrack, isPlaying, suit, onPlay, history = [], 
       <div className="grid grid-cols-2 gap-2">
         {quick.map((t) => (
           <button key={t.id} type="button" onClick={() => onPlay(t)} className="flex items-center gap-2 rounded-lg bg-white/[0.08] overflow-hidden text-left active:scale-95 transition" style={{ border: `1px solid ${suit.secondary}66`, borderLeft: `3px solid ${suit.primary}`, borderRadius: fx.cardRadius, boxShadow: fx.cardShadow }}>
-            <img src={t.cover} alt={t.title} className="w-11 h-11 object-cover shrink-0" />
+            <CoverImg src={t.cover} videoId={t.videoId || t.id} alt={t.title} className="w-11 h-11 object-cover shrink-0" />
             <span className="text-[11px] font-bold text-white line-clamp-2 flex-1">{t.title}</span>
             <span className="mr-2 w-5 h-5 shrink-0 rounded-full bg-white/90 flex items-center justify-center"><Play size={10} className="text-black ml-px" fill="currentColor" /></span>
           </button>
@@ -778,7 +779,7 @@ function HomeView({ songs, currentTrack, isPlaying, suit, onPlay, history = [], 
         <div className="flex gap-3 overflow-x-auto pb-1">
           {cont.map((t) => (
             <button key={t.id} type="button" onClick={() => onPlay(t)} className="w-28 shrink-0 text-left active:scale-95 transition">
-              <img src={t.cover} alt={t.title} className="w-28 h-28 rounded-xl object-cover" style={{ border: currentTrack?.id === t.id && isPlaying ? `2px solid ${suit.primary}` : '1px solid rgba(255,255,255,0.12)' }} />
+              <CoverImg src={t.cover} videoId={t.videoId || t.id} alt={t.title} className="w-28 h-28 rounded-xl object-cover" style={{ border: currentTrack?.id === t.id && isPlaying ? `2px solid ${suit.primary}` : '1px solid rgba(255,255,255,0.12)' }} />
               <div className="text-[11px] font-bold text-white truncate mt-1.5">{t.title}</div>
               <div className="text-[10px] text-neutral-400 truncate">{t.artist}</div>
             </button>
@@ -796,7 +797,7 @@ function HomeView({ songs, currentTrack, isPlaying, suit, onPlay, history = [], 
         {first && (
           <div onClick={() => onPlay(first)} className="relative overflow-hidden rounded-2xl p-3 mb-2 flex items-center gap-3 cursor-pointer border-2 active:scale-[0.99] transition" style={{ borderColor: suit.primary, boxShadow: `0 0 24px ${suit.glow}`, backgroundImage: 'radial-gradient(rgba(255,255,255,0.10) 1px, transparent 1.6px)', backgroundSize: '8px 8px' }}>
             <div className="relative shrink-0">
-              <img src={first.cover} alt={first.title} className="w-24 h-24 rounded-xl object-cover border-2 border-white" />
+              <CoverImg src={first.cover} videoId={first.videoId || first.id} alt={first.title} className="w-24 h-24 rounded-xl object-cover border-2 border-white" />
               <div className="absolute -top-3 -left-3 w-11 h-11 flex items-center justify-center font-black text-white text-sm -rotate-12" style={{ background: suit.primary, clipPath: BURST }}>#1</div>
             </div>
             <div className="min-w-0 flex-1">
@@ -813,7 +814,7 @@ function HomeView({ songs, currentTrack, isPlaying, suit, onPlay, history = [], 
         {top.slice(1).map((t, i) => (
           <div key={t.id} onClick={() => onPlay(t)} className="flex items-center gap-3 px-2 py-1.5 rounded-xl cursor-pointer hover:bg-white/[0.06] active:scale-[0.99] transition">
             <span className="w-8 text-center text-2xl font-black italic tabular-nums" style={outline}>{i + 2}</span>
-            <img src={t.cover} alt={t.title} className="w-11 h-11 rounded-lg object-cover shrink-0 border border-white/10" />
+            <CoverImg src={t.cover} videoId={t.videoId || t.id} alt={t.title} className="w-11 h-11 rounded-lg object-cover shrink-0 border border-white/10" />
             <div className="min-w-0 flex-1">
               <div className="text-xs font-bold text-white truncate">{t.title}</div>
               <div className="text-[11px] text-neutral-400 truncate">{t.artist}</div>
@@ -954,7 +955,7 @@ function BackupSection({ suit }) {
   );
 }
 
-function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, backendConnected, islandOn, setIslandOn, islandLyrics, setIslandLyrics, notifLyrics, setNotifLyrics }) {
+function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, backendConnected, islandOn, setIslandOn, islandLyrics, setIslandLyrics, notifLyrics, setNotifLyrics, islandTheme, setIslandTheme, lockLyrics, setLockLyrics }) {
   return (
     <div className="space-y-4 pb-4">
       <div>
@@ -986,6 +987,7 @@ function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, 
               ? [
                   { label: 'Tampilkan Dynamic Island', sub: 'Pil melayang di atas layar saat kamu menekan Home. Butuh izin "Tampil di atas aplikasi lain". Ketuk pil untuk membuka kontrol.', on: islandOn, set: setIslandOn },
                   { label: 'Tampilkan lirik di Island', sub: 'Baris lirik yang sedang dinyanyikan muncul di dalam pil.', on: islandLyrics, set: setIslandLyrics, disabled: !islandOn },
+                  { label: 'Lirik di layar kunci', sub: 'Saat layar menyala dan terkunci, lirik besar + kontrol musik tampil di atas layar kunci. Geser ke atas untuk membuka kunci.', on: lockLyrics, set: setLockLyrics, disabled: !islandOn },
                 ]
               : []),
             { label: 'Lirik di notifikasi & layar kunci', sub: 'Baris lirik tampil di notifikasi musik, juga saat aplikasi ditutup atau layar dikunci.', on: notifLyrics, set: setNotifLyrics },
@@ -1014,6 +1016,37 @@ function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, 
             </button>
           ))}
         </div>
+        {ISLAND_OK && (
+          <div className="mt-2 rounded-xl bg-white/[0.05] p-3">
+            <div className="text-xs font-bold text-white mb-0.5">Tema Island</div>
+            <div className="text-[11px] text-neutral-400 mb-2">Ketuk pil untuk membuka kartu musik, ketuk lagi untuk menutup.</div>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { id: 'spidey', label: 'Spidey Chibi', sub: 'Merah-biru + maskot' },
+                { id: 'dark', label: 'Dark', sub: 'Hitam polos' },
+              ].map((t) => {
+                const on = islandTheme === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setIslandTheme(t.id)}
+                    aria-pressed={on}
+                    className="rounded-xl p-2.5 text-left border active:scale-95 transition"
+                    style={{
+                      borderColor: on ? suit.primary : 'rgba(255,255,255,0.12)',
+                      background: t.id === 'spidey' ? 'linear-gradient(90deg,#E62429,#9B1B4A,#1F2A8F)' : '#000',
+                      boxShadow: on ? `0 0 0 2px ${suit.primary}66` : 'none',
+                    }}
+                  >
+                    <span className="block text-xs font-extrabold text-white">{t.label}</span>
+                    <span className="block text-[10px] text-white/70">{t.sub}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
       <div>
         <h3 className="text-sm font-black italic text-white mb-2">Latar belakang</h3>
@@ -1069,6 +1102,8 @@ export default function MusicPlayer() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [islandOn, setIslandOn] = useState(SAVED_PREFS.islandOn === true); // default MATI
   const [islandLyrics, setIslandLyrics] = useState(SAVED_PREFS.islandLyrics !== false);
+  const [islandTheme, setIslandTheme] = useState(SAVED_PREFS.islandTheme === 'dark' ? 'dark' : 'spidey');
+  const [lockLyrics, setLockLyrics] = useState(SAVED_PREFS.lockLyrics === true); // default MATI
   const [notifLyrics, setNotifLyrics] = useState(SAVED_PREFS.notifLyrics !== false);
   const [playbackMode, setPlaybackMode] = useState(SAVED_PREFS.mode === 'video' ? 'video' : 'audio'); // 'audio' | 'video'
   const [currentTime, setCurrentTime] = useState(RESTORED_TIME);
@@ -1839,6 +1874,20 @@ export default function MusicPlayer() {
     setIslandOn(v);
   }, []);
 
+  const seekRef = useRef(null);
+
+  const handleSetLock = useCallback(async (v) => {
+    if (v && ISLAND_OK) {
+      try {
+        const r = await Island.hasPermission();
+        if (!r || !r.granted) await Island.requestPermission();
+      } catch (e) {
+        // abaikan
+      }
+    }
+    setLockLyrics(v);
+  }, []);
+
   const islandLine =
     islandLyrics && Array.isArray(lyrics) && activeLineIndex >= 0 && lyrics.length > 0
       ? String(lyrics[activeLineIndex]?.text || '').trim()
@@ -1851,14 +1900,56 @@ export default function MusicPlayer() {
 
   useEffect(() => {
     if (!ISLAND_OK) return;
+    Island.setTheme({ theme: islandTheme }).catch(() => {});
+  }, [islandTheme]);
+
+  useEffect(() => {
+    if (!ISLAND_OK) return;
+    Island.setLockLyrics({ enabled: lockLyrics && islandOn }).catch(() => {});
+  }, [lockLyrics, islandOn]);
+
+  // 5 baris lirik (2 sebelum, sekarang, 2 sesudah) untuk layar kunci
+  const lockLines =
+    lockLyrics && Array.isArray(lyrics) && lyrics.length > 0 && activeLineIndex >= 0
+      ? [-2, -1, 0, 1, 2].map((d) => String(lyrics[activeLineIndex + d]?.text || '').trim())
+      : ['', '', '', '', ''];
+  const lockLinesKey = lockLines.join('\n');
+
+  // posisi lagu untuk progress bar di Island (native menghitung sendiri selama lagu diputar)
+  const islandTimeRef = useRef(0);
+  islandTimeRef.current = currentTime;
+  const durRef = useRef(0);
+  durRef.current = duration;
+  const islandSentRef = useRef({ pos: 0, at: 0 });
+  const pushIsland = () => {
+    if (!ISLAND_OK) return;
+    islandSentRef.current = { pos: islandTimeRef.current, at: Date.now() };
     Island.update({
       title: currentTrack?.title || '',
       artist: currentTrack?.artist || '',
+      cover: currentTrack?.cover || '',
       line: islandLine,
+      lines: lockLines,
       playing: !!isPlaying,
       active: !!currentTrack,
+      position: Number(islandTimeRef.current) || 0,
+      duration: Number(durRef.current) || 0,
     }).catch(() => {});
-  }, [currentTrack, islandLine, isPlaying]);
+  };
+  const pushIslandRef = useRef(pushIsland);
+  pushIslandRef.current = pushIsland;
+
+  useEffect(() => {
+    pushIslandRef.current();
+  }, [currentTrack, islandLine, lockLinesKey, isPlaying, duration]);
+
+  // kalau posisi lompat (seek), kabari Island supaya progress-nya ikut
+  useEffect(() => {
+    if (!ISLAND_OK || !isPlaying) return;
+    const s = islandSentRef.current;
+    const expected = s.pos + (Date.now() - s.at) / 1000;
+    if (Math.abs(currentTime - expected) > 2) pushIslandRef.current();
+  }, [currentTime, isPlaying]);
 
   useEffect(() => {
     if (!ISLAND_OK) return undefined;
@@ -1869,6 +1960,10 @@ export default function MusicPlayer() {
       if (a === 'toggle') handleTogglePlayPause();
       else if (a === 'next') handleStepTrack(1);
       else if (a === 'prev') handleStepTrack(-1);
+      else if (typeof a === 'string' && a.startsWith('seek:')) {
+        const f = parseFloat(a.slice(5));
+        if (f >= 0 && f <= 1 && durRef.current > 0 && seekRef.current) seekRef.current(f * durRef.current);
+      }
     })
       .then((h) => {
         if (cancelled) h.remove();
@@ -1964,9 +2059,11 @@ export default function MusicPlayer() {
       shuffle: shuffleOn,
       islandOn,
       islandLyrics,
+      islandTheme,
+      lockLyrics,
       notifLyrics,
     });
-  }, [likedIds, suitId, volume, playbackMode, repeatMode, shuffleOn, islandOn, islandLyrics, notifLyrics]);
+  }, [likedIds, suitId, volume, playbackMode, repeatMode, shuffleOn, islandOn, islandLyrics, islandTheme, lockLyrics, notifLyrics]);
 
   useEffect(() => {
     writeSaved('spideyfy-history', history);
@@ -2133,6 +2230,7 @@ export default function MusicPlayer() {
     const pl = ytPlayerRef.current;
     if (pl && typeof pl.seekTo === 'function') pl.seekTo(sec, true);
   };
+  seekRef.current = seekToSec;
 
   // Geser bar durasi (layar lirik penuh)
   const scrubFromEvent = (e) => {
@@ -2266,7 +2364,7 @@ export default function MusicPlayer() {
       </svg>
 
       {/* macOS Top Menu Bar */}
-      <header className="relative z-20 h-7 px-3.5 flex items-center justify-between bg-[#0b0b10]/75 backdrop-blur-xl border-b border-white/[0.08] text-[11.5px] font-medium text-neutral-200 shrink-0">
+      <header className="relative z-20 h-7 px-3.5 flex items-center justify-between bg-[#0b0b10]/60 backdrop-blur-2xl backdrop-saturate-150 border-b border-white/[0.09] shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] text-[11.5px] font-medium text-neutral-200 shrink-0">
         <div className="flex items-center gap-2.5">
           <span
             className="w-2 h-2 rounded-full"
@@ -2526,6 +2624,10 @@ export default function MusicPlayer() {
                     setIslandOn={handleSetIsland}
                     islandLyrics={islandLyrics}
                     setIslandLyrics={setIslandLyrics}
+                    islandTheme={islandTheme}
+                    setIslandTheme={setIslandTheme}
+                    lockLyrics={lockLyrics}
+                    setLockLyrics={handleSetLock}
                     notifLyrics={notifLyrics}
                     setNotifLyrics={setNotifLyrics}
                   />
@@ -2566,8 +2668,9 @@ export default function MusicPlayer() {
                           )}
                         </span>
 
-                        <img
+                        <CoverImg
                           src={track.cover}
+                          videoId={track.videoId || track.id}
                           alt={track.title}
                           className="w-11 h-11 rounded-lg object-cover bg-neutral-900 border border-white/10 shrink-0"
                         />
@@ -2622,7 +2725,7 @@ export default function MusicPlayer() {
                         onClick={() => handleCollectionClick(alb.sampleTrackId)}
                         className="p-3 rounded-xl bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.08] cursor-pointer transition flex items-center gap-3 group"
                       >
-                        <img
+                        <CoverImg
                           src={alb.cover}
                           alt={alb.title}
                           className="w-14 h-14 rounded-lg object-cover shrink-0 border border-white/10"
@@ -2652,7 +2755,7 @@ export default function MusicPlayer() {
                         onClick={() => handleCollectionClick(art.sampleTrackId)}
                         className="p-3 rounded-xl bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.08] cursor-pointer transition flex items-center gap-3"
                       >
-                        <img
+                        <CoverImg
                           src={art.cover}
                           alt={art.name}
                           className="w-14 h-14 rounded-full object-cover shrink-0 border-2"
@@ -2703,7 +2806,7 @@ export default function MusicPlayer() {
                         className="p-3 rounded-xl bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.08] cursor-pointer transition flex items-center justify-between gap-3"
                       >
                         <div className="flex items-center gap-3 min-w-0">
-                          <img
+                          <CoverImg
                             src={pl.cover}
                             alt={pl.title}
                             className="w-12 h-12 rounded-lg object-cover shrink-0 border border-white/10"
@@ -2760,8 +2863,9 @@ export default function MusicPlayer() {
               </div>
               {playbackMode !== 'video' && (
                 <div className="hidden lg:flex items-center gap-3.5 p-3 rounded-2xl bg-black/40 border border-white/10 shrink-0">
-                  <img
+                  <CoverImg
                     src={currentTrack?.cover || FALLBACK_CATALOG.songs[0].cover}
+                    videoId={currentTrack?.videoId || currentTrack?.id}
                     alt={currentTrack?.title || 'Cover'}
                     className="w-16 h-16 rounded-xl object-cover shrink-0 border border-white/15 shadow-lg"
                   />
@@ -2792,8 +2896,9 @@ export default function MusicPlayer() {
                   <div className="absolute inset-x-0 bottom-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${suit.primary}, transparent)` }} />
                 </div>
                 <div className="flex items-center gap-3">
-                  <img
+                  <CoverImg
                     src={currentTrack?.cover || FALLBACK_CATALOG.songs[0].cover}
+                    videoId={currentTrack?.videoId || currentTrack?.id}
                     alt={currentTrack?.title || 'Cover'}
                     className="w-20 h-20 rounded-xl object-cover shrink-0 border border-white/15 shadow-lg"
                   />
@@ -2950,8 +3055,9 @@ export default function MusicPlayer() {
           <footer className={`${mobilePane === 'lyrics' ? 'max-lg:hidden ' : ''}px-3.5 sm:px-5 py-2.5 bg-black/85 border-t border-white/[0.09] grid grid-cols-[1fr_auto] md:grid-cols-[1fr_1.45fr_1fr] items-center gap-3 shrink-0`}>
             {/* Track Info (tap untuk buka lagu dan lirik) */}
             <div className="flex items-center gap-2.5 min-w-0 cursor-pointer" onClick={() => setMobilePane('lyrics')}>
-              <img
+              <CoverImg
                 src={currentTrack?.cover || FALLBACK_CATALOG.songs[0].cover}
+                videoId={currentTrack?.videoId || currentTrack?.id}
                 alt="Now playing"
                 className="w-10 h-10 rounded-lg object-cover border border-white/15 shrink-0"
               />
@@ -3131,8 +3237,9 @@ export default function MusicPlayer() {
           }}
         >
           <div className="flex items-center gap-3 px-4 pt-3 pb-2 shrink-0">
-            <img
+            <CoverImg
               src={currentTrack?.cover || FALLBACK_CATALOG.songs[0].cover}
+              videoId={currentTrack?.videoId || currentTrack?.id}
               alt={currentTrack?.title || 'Cover'}
               className="w-11 h-11 rounded-lg object-cover border border-white/15 shrink-0"
             />
@@ -3321,7 +3428,7 @@ export default function MusicPlayer() {
       )}
 
       {/* Navigasi bawah (HP) */}
-      <nav aria-label="Navigasi" className="lg:hidden fixed bottom-0 inset-x-0 z-30 h-14 flex items-stretch bg-[#0b0b10]/95 backdrop-blur-xl border-t border-white/10">
+      <nav aria-label="Navigasi" className="lg:hidden fixed bottom-0 inset-x-0 z-30 h-14 flex items-stretch gap-1 px-1.5 bg-[#0b0b10]/70 backdrop-blur-2xl backdrop-saturate-150 border-t border-white/[0.12]">
         {[
           { id: 'home', label: 'Beranda', icon: Home },
           { id: 'songs', label: 'Cari', icon: Search },
@@ -3345,10 +3452,10 @@ export default function MusicPlayer() {
                   if (tab.id === 'songs') setTimeout(() => searchInputRef.current?.focus(), 150);
                 }
               }}
-              className="flex-1 flex flex-col items-center justify-center gap-0.5 active:scale-95 transition"
-              style={{ color: active ? suit.primary : '#a3a3a3' }}
+              className="flex-1 my-1.5 rounded-2xl flex flex-col items-center justify-center gap-0.5 active:scale-90 transition-[transform,background-color,color] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)]"
+              style={{ color: active ? suit.primary : '#a3a3a3', backgroundColor: active ? 'rgba(255,255,255,0.09)' : 'transparent' }}
             >
-              <Icon className="w-5 h-5" />
+              <Icon className="w-5 h-5 transition-transform duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)]" style={{ transform: active ? 'translateY(-1px) scale(1.12)' : 'none' }} />
               <span className="text-[10px] font-bold">{tab.label}</span>
             </button>
           );
@@ -3402,8 +3509,9 @@ export default function MusicPlayer() {
 
         {(windowMode === 'minimized' || windowMode === 'closed') && currentTrack && (
           <div className="flex items-center gap-2 pl-2 ml-1 border-l border-white/15">
-            <img
+            <CoverImg
               src={currentTrack.cover}
+              videoId={currentTrack.videoId || currentTrack.id}
               alt={currentTrack.title}
               onClick={() => setWindowMode('normal')}
               className="w-8 h-8 rounded-lg object-cover cursor-pointer"
