@@ -37,6 +37,7 @@ import {
   Shuffle,
 } from 'lucide-react';
 import { PlaylistLibrary, PlaylistDetail } from './PlaylistsView.jsx';
+import { seedQueries, fetchSongs, mergeAlternating, shuffle, artistOf } from './reco.js';
 
 // Paksa YouTube IFrame & WebView mengira layar selalu aktif (tidak pernah hidden/pause)
 if (typeof document !== 'undefined') {
@@ -677,7 +678,63 @@ function WebCorner({ color }) {
 
 const BURST = 'polygon(50% 0, 62% 20%, 85% 12%, 80% 36%, 100% 50%, 80% 64%, 85% 88%, 62% 80%, 50% 100%, 38% 80%, 15% 88%, 20% 64%, 0 50%, 20% 36%, 15% 12%, 38% 20%)';
 
-function HomeView({ songs, currentTrack, isPlaying, suit, onPlay, history = [] }) {
+// Rekomendasi di beranda: mengikuti lagu yang kamu putar dan kamu masukkan ke playlist
+function RecoRow({ songs, seeds, ownedIds, currentTrack, isPlaying, suit, onPlay }) {
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [nonce, setNonce] = useState(0);
+  const seedKey = seeds.slice(0, 8).map((x) => x.id).join(',');
+  const ownedRef = useRef(ownedIds);
+  ownedRef.current = ownedIds;
+
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    setLoading(true);
+    (async () => {
+      let out = [];
+      const qs = seedQueries(seeds, 3);
+      if (qs.length) {
+        try {
+          const lists = await Promise.all(qs.map((q) => fetchSongs(q, controller.signal).catch(() => null)));
+          out = mergeAlternating(lists, 40).filter((x) => !ownedRef.current.has(x.id));
+          if (nonce > 0) out = shuffle(out);
+        } catch { /* pakai cadangan di bawah */ }
+      }
+      if (cancelled) return;
+      if (!out.length) out = shuffle(songs.filter((x) => !ownedRef.current.has(x.id)));
+      setList(out.slice(0, 12));
+      setLoading(false);
+    })();
+    return () => { cancelled = true; controller.abort(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seedKey, nonce]);
+
+  const names = [...new Set(seeds.map(artistOf).filter(Boolean))].slice(0, 2);
+  if (!list.length && !loading) return null;
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-sm font-black italic text-white flex items-center gap-1.5"><SpiderIcon size={14} color={suit.primary} /> Rekomendasi</h3>
+        <button type="button" onClick={() => setNonce((n) => n + 1)} aria-label="Segarkan rekomendasi" className="flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-white/10 text-white active:scale-95 transition">
+          <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} /> Segarkan
+        </button>
+      </div>
+      {names.length > 0 && <p className="text-[11px] text-neutral-400 -mt-1 mb-2 truncate">Karena kamu suka {names.join(' & ')}</p>}
+      <div className="flex gap-3 overflow-x-auto pb-1">
+        {list.map((t) => (
+          <button key={t.id} type="button" onClick={() => onPlay(t)} className="w-28 shrink-0 text-left active:scale-95 transition">
+            <img src={t.cover} alt={t.title} className="w-28 h-28 rounded-xl object-cover" style={{ border: currentTrack?.id === t.id && isPlaying ? `2px solid ${suit.primary}` : '1px solid rgba(255,255,255,0.12)' }} />
+            <div className="text-[11px] font-bold text-white truncate mt-1.5">{t.title}</div>
+            <div className="text-[10px] text-neutral-400 truncate">{t.artist}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function HomeView({ songs, currentTrack, isPlaying, suit, onPlay, history = [], seeds = [], ownedIds = new Set() }) {
   const h = new Date().getHours();
   const greet = h < 11 ? 'Selamat pagi' : h < 15 ? 'Selamat siang' : h < 18 ? 'Selamat sore' : 'Selamat malam';
   const quick = songs.slice(0, 6);
@@ -728,6 +785,8 @@ function HomeView({ songs, currentTrack, isPlaying, suit, onPlay, history = [] }
           ))}
         </div>
       </div>
+
+      <RecoRow songs={songs} seeds={seeds} ownedIds={ownedIds} currentTrack={currentTrack} isPlaying={isPlaying} suit={suit} onPlay={onPlay} />
 
       <div>
         <h3 className="mb-2 flex items-center gap-2">
@@ -2009,6 +2068,15 @@ export default function MusicPlayer() {
   };
 
   const openPlaylist = userPlaylists.find((pl) => pl.id === openPlaylistId) || null;
+  // Selera untuk rekomendasi beranda: lagu terakhir di playlist (terbaru dulu) lalu riwayat putar
+  const tasteSeeds = useMemo(
+    () => [...userPlaylists.flatMap((pl) => (pl.tracks || []).slice(-3).reverse()), ...history].filter((x) => x && x.artist),
+    [userPlaylists, history]
+  );
+  const ownedIds = useMemo(
+    () => new Set([...history.map((x) => x.id), ...userPlaylists.flatMap((pl) => (pl.tracks || []).map((x) => x.id))]),
+    [userPlaylists, history]
+  );
 
   const playUserPlaylist = (pl, startTrack) => {
     if (!pl.tracks.length) return;
@@ -2471,6 +2539,8 @@ export default function MusicPlayer() {
                     suit={suit}
                     onPlay={(t) => handleSelectTrack(t, true)}
                     history={history}
+                    seeds={tasteSeeds}
+                    ownedIds={ownedIds}
                   />
                 )}
 

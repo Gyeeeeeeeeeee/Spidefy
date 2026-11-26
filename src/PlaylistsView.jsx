@@ -15,7 +15,9 @@ import {
   X,
   Minus,
   ListPlus,
+  RefreshCw,
 } from 'lucide-react';
+import { seedQueries } from './reco.js';
 
 /* ---------- Helpers ---------- */
 
@@ -288,6 +290,8 @@ function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
   const [addingId, setAddingId] = useState(null);
   const autoRef = useRef([]);
   autoRef.current = autoList;
+  const addedRef = useRef([]); // lagu yang dipilih di sesi ini, terbaru di depan
+  const seenRef = useRef(new Set());
   const resultsRef = useRef([]);
   resultsRef.current = results;
   const tracksRef = useRef(pl.tracks || []);
@@ -389,38 +393,82 @@ function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Begitu lagu dipilih, langsung munculkan rekomendasi lagu mirip tepat di bawahnya
+  // Selera saat ini: lagu yang baru dipilih (terbaru dulu) + lagu terakhir di playlist
+  const tasteSeeds = () => [...addedRef.current, ...[...(tracksRef.current || [])].reverse().slice(0, 6)];
+
+  // Ambil rekomendasi segar dari selera saat ini. Lagu yang sudah ada/sudah pernah tampil dikurangi.
+  const buildFresh = async (limit) => {
+    const seeds = tasteSeeds();
+    const qs = seedQueries(seeds, 3);
+    const last = addedRef.current[0];
+    if (last) qs.push(`mirip ${last.title} ${String(last.artist || '').split(',')[0].trim()}`);
+    if (!qs.length) qs.push('lagu populer indonesia');
+    const lists = await Promise.all(qs.map((qq) => searchSongsOnline(qq).catch(() => null)));
+    const taken = new Set([...tracksRef.current.map((x) => x.id), ...addedRef.current.map((x) => x.id)]);
+    const all = mergeAlternating(lists, 60).filter((x) => !taken.has(x.id));
+    const unseen = all.filter((x) => !seenRef.current.has(x.id));
+    const out = (unseen.length >= limit ? unseen : [...unseen, ...all.filter((x) => seenRef.current.has(x.id))]).slice(0, limit);
+    out.forEach((x) => seenRef.current.add(x.id));
+    return out;
+  };
+
+  const flash = (ids) => {
+    setFreshIds(ids);
+    setTimeout(() => setFreshIds([]), 900);
+  };
+
+  // Begitu lagu dipilih: sisa daftar di bawahnya diganti rekomendasi baru yang mengikuti seleramu
   const refreshAfterAdd = async (song) => {
-    const artist = String(song.artist || '').split(',')[0].trim();
-    if (!artist) return;
     setAddingId(song.id);
     try {
-      const lists = await Promise.all([
-        searchSongsOnline(`${artist} lagu populer`).catch(() => null),
-        searchSongsOnline(`mirip ${song.title} ${artist}`).catch(() => null),
-      ]);
-      const taken = new Set([...autoRef.current.map((x) => x.id), ...resultsRef.current.map((x) => x.id), ...tracksRef.current.map((x) => x.id), song.id]);
-      const fresh = mergeAlternating(lists, 12).filter((x) => !taken.has(x.id)).slice(0, 5);
+      const fresh = await buildFresh(10);
       if (!fresh.length) return;
-      const insertAfter = (prev) => {
-        const idx = prev.findIndex((x) => x.id === song.id);
-        const at = idx >= 0 ? idx + 1 : 0;
-        return [...prev.slice(0, at), ...fresh, ...prev.slice(at)];
-      };
-      // Rekomendasi muncul tepat di bawah lagu yang baru ditambahkan, baik di daftar awal maupun saat mencari
-      setAutoList(insertAfter);
-      if (mode !== 'auto') setResults(insertAfter);
-      setFreshIds(fresh.map((x) => x.id));
-      setTimeout(() => setFreshIds([]), 900);
+      if (mode === 'auto') {
+        setAutoList((prev) => {
+          const idx = prev.findIndex((x) => x.id === song.id);
+          const at = idx >= 0 ? idx + 1 : prev.length;
+          return [...prev.slice(0, at), ...fresh];
+        });
+      } else {
+        // Saat mencari/chip: hasilnya tetap, rekomendasi disisipkan tepat di bawah lagu yang ditambah
+        const near = fresh.slice(0, 5);
+        const insertAfter = (prev) => {
+          const idx = prev.findIndex((x) => x.id === song.id);
+          const at = idx >= 0 ? idx + 1 : 0;
+          return [...prev.slice(0, at), ...near.filter((n) => !prev.some((x) => x.id === n.id)), ...prev.slice(at)];
+        };
+        setResults(insertAfter);
+        setAutoList((prev) => [...fresh, ...prev.filter((x) => !fresh.some((f) => f.id === x.id))]);
+      }
+      flash(fresh.map((x) => x.id));
     } finally {
       setAddingId(null);
+    }
+  };
+
+  // Tombol segarkan: ganti seluruh rekomendasi dengan yang baru
+  const regenerate = async () => {
+    setAutoLoading(true);
+    try {
+      const fresh = await buildFresh(20);
+      if (fresh.length) {
+        setAutoList([...addedRef.current, ...fresh]);
+        flash(fresh.map((x) => x.id));
+      }
+    } finally {
+      setAutoLoading(false);
     }
   };
 
   const handleToggle = (song) => {
     const had = pl.tracks.some((t) => t.id === song.id);
     onToggle(pl.id, song);
-    if (!had) refreshAfterAdd(song);
+    if (had) {
+      addedRef.current = addedRef.current.filter((x) => x.id !== song.id);
+    } else {
+      addedRef.current = [song, ...addedRef.current.filter((x) => x.id !== song.id)].slice(0, 6);
+      refreshAfterAdd(song);
+    }
   };
 
   const localList = useMemo(() => {
@@ -490,7 +538,14 @@ function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
             })}
           </div>
         </div>
-        <div className="text-[11px] font-bold text-neutral-400 -mb-1">{heading}</div>
+        <div className="flex items-center justify-between -mb-1">
+          <div className="text-[11px] font-bold text-neutral-400">{heading}</div>
+          {mode === 'auto' && (
+            <button type="button" onClick={regenerate} disabled={autoLoading} aria-label="Segarkan rekomendasi" className="flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-full bg-white/10 text-white active:scale-95 disabled:opacity-50">
+              <RefreshCw className={`w-3 h-3 ${autoLoading ? 'animate-spin' : ''}`} /> Segarkan
+            </button>
+          )}
+        </div>
         <div className="flex-1 overflow-y-auto space-y-1">
           {((loading && mode !== 'auto') || (autoLoading && mode === 'auto' && !autoList.length)) && <p className="text-xs text-neutral-400 px-1">Mencari lagu...</p>}
           {failed && <p className="text-[11px] text-neutral-400 px-1">Pencarian online belum tersambung. Menampilkan dari daftar yang ada.</p>}
