@@ -5,6 +5,7 @@ export const config = {
 export default async function handler(req) {
   const { searchParams } = new URL(req.url);
   const audioUrl = searchParams.get('url');
+  const title = searchParams.get('title') || 'Spidefy-Audio';
 
   if (!audioUrl) {
     return new Response('URL tidak ditemukan', { status: 400 });
@@ -21,10 +22,14 @@ export default async function handler(req) {
       return new Response('Gagal mengambil audio', { status: response.status });
     }
 
+    // Bersihkan nama file agar aman disimpan di Android
+    const safeFilename = title.replace(/[^a-zA-Z0-9 \-_]/g, '').trim() + '.m4a';
+
     return new Response(response.body, {
       status: 200,
       headers: {
-        'Content-Type': response.headers.get('Content-Type') || 'audio/mp4',
+        'Content-Type': 'audio/mp4',
+        'Content-Disposition': `attachment; filename="${safeFilename}"`,
         'Access-Control-Allow-Origin': '*',
       },
     });
