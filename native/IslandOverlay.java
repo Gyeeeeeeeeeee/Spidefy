@@ -120,7 +120,7 @@ public class IslandOverlay {
   public double posSec = 0;
   public double durSec = 0;
   public long posStamp = 0;
-  public String theme = "spidey";
+  public String theme = "dark";
   public Bitmap cover = null;
 
   private boolean enabled = false;
@@ -143,6 +143,8 @@ public class IslandOverlay {
   private TextView expTitle;
   private TextView expArtist;
   private TextView lyricTv;
+  private TextView closeBtn;
+  private boolean dismissed = false;
   private TextView elapsedTv;
   private TextView remainTv;
   private IslandViews.ChibiView chibiCompact;
@@ -239,7 +241,10 @@ public class IslandOverlay {
 
   public void setForeground(boolean v) {
     foreground = v;
-    if (v) expanded = false;
+    if (v) {
+      expanded = false;
+      dismissed = false; // buka app lagi -> island boleh muncul lagi nanti
+    }
     refresh();
   }
 
@@ -350,14 +355,40 @@ public class IslandOverlay {
     return h > 0 ? h : dp(24);
   }
 
-  /** Ganti teks hanya kalau benar-benar berubah; pastikan view selalu terlihat. */
+  /** Ganti teks lalu fade-in + naik tipis. Apa pun yang terjadi, teks dipaksa terlihat penuh di akhir. */
   private void swapText(final TextView tv, String next) {
     if (tv == null) return;
     final String n = next == null ? "" : next;
     if (n.contentEquals(tv.getText())) return;
-    tv.setAlpha(1f);
-    tv.setTranslationY(0f);
+    tv.animate().setListener(null);
+    tv.animate().cancel();
     tv.setText(n);
+    if (root == null || tv.getWidth() == 0) {
+      tv.setAlpha(1f);
+      tv.setTranslationY(0f);
+      return;
+    }
+    tv.setAlpha(0f);
+    tv.setTranslationY(dp(6));
+    tv.animate()
+        .setListener(new AnimatorListenerAdapter() {
+          @Override
+          public void onAnimationCancel(Animator a) {
+            tv.setAlpha(1f);
+            tv.setTranslationY(0f);
+          }
+
+          @Override
+          public void onAnimationEnd(Animator a) {
+            tv.setAlpha(1f);
+            tv.setTranslationY(0f);
+          }
+        })
+        .alpha(1f)
+        .translationY(0f)
+        .setDuration(260)
+        .setInterpolator(new DecelerateInterpolator())
+        .start();
   }
 
   private int dp(int v) {
@@ -473,7 +504,7 @@ public class IslandOverlay {
 
   private void doRefresh() {
     try {
-      boolean show = enabled && !foreground && active && canDraw();
+      boolean show = enabled && !foreground && active && canDraw() && !dismissed;
       if (!show) {
         hideView();
         return;
@@ -488,6 +519,13 @@ public class IslandOverlay {
     } catch (Exception e) {
       // abaikan supaya app tidak crash
     }
+  }
+
+  /** Sembunyikan island sampai app dibuka lagi (kalau mengganggu). */
+  private void dismiss() {
+    dismissed = true;
+    expanded = false;
+    doRefresh();
   }
 
   private void cancelHide() {
@@ -714,6 +752,29 @@ public class IslandOverlay {
 
     root.addView(expandedBox, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, expandedH));
 
+    // tombol sembunyikan island (muncul di kartu yang dibuka, pojok kanan bawah)
+    closeBtn = new TextView(ctx);
+    closeBtn.setText("\u00D7");
+    closeBtn.setTextColor(Color.WHITE);
+    closeBtn.setTextSize(18);
+    closeBtn.setTypeface(Typeface.DEFAULT_BOLD);
+    closeBtn.setGravity(Gravity.CENTER);
+    closeBtn.setIncludeFontPadding(false);
+    GradientDrawable closeBg = new GradientDrawable();
+    closeBg.setShape(GradientDrawable.OVAL);
+    closeBg.setColor(Color.parseColor("#33FFFFFF"));
+    closeBtn.setBackground(closeBg);
+    closeBtn.setOnClickListener(new View.OnClickListener() {
+      @Override
+      public void onClick(View v) {
+        dismiss();
+      }
+    });
+    FrameLayout.LayoutParams clp = new FrameLayout.LayoutParams(dp(30), dp(30), Gravity.BOTTOM | Gravity.END);
+    clp.rightMargin = dp(14);
+    clp.bottomMargin = dp(12);
+    root.addView(closeBtn, clp);
+
     int type = Build.VERSION.SDK_INT >= 26
         ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         : WindowManager.LayoutParams.TYPE_PHONE;
@@ -814,6 +875,10 @@ public class IslandOverlay {
     compact.setVisibility(ca > 0.01f ? View.VISIBLE : View.INVISIBLE);
     expandedBox.setAlpha(ea);
     expandedBox.setVisibility(ea > 0.01f ? View.VISIBLE : View.INVISIBLE);
+    if (closeBtn != null) {
+      closeBtn.setAlpha(ea);
+      closeBtn.setVisibility(ea > 0.01f ? View.VISIBLE : View.INVISIBLE);
+    }
     root.invalidateOutline();
   }
 
