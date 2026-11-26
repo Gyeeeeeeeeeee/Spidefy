@@ -23,6 +23,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewOutlineProvider;
 import android.view.WindowManager;
+import android.view.animation.DecelerateInterpolator;
 import android.view.animation.Interpolator;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -251,6 +252,48 @@ public class IslandOverlay {
     });
   }
 
+  /** Tinggi status bar, supaya pil muncul tepat di bawahnya dan tidak menutupi ikon notifikasi. */
+  private int statusBarH() {
+    int id = ctx.getResources().getIdentifier("status_bar_height", "dimen", "android");
+    int h = id > 0 ? ctx.getResources().getDimensionPixelSize(id) : 0;
+    return h > 0 ? h : dp(24);
+  }
+
+  /** Ganti teks dengan fade + geser tipis (halus), hanya kalau teksnya benar-benar berubah. */
+  private void swapText(final TextView tv, String next) {
+    if (tv == null) return;
+    final String n = next == null ? "" : next;
+    if (n.contentEquals(tv.getText())) return;
+    tv.setTag(n);
+    tv.animate().cancel();
+    if (tv.getText().length() == 0 || root == null) {
+      tv.setAlpha(1f);
+      tv.setTranslationY(0f);
+      tv.setText(n);
+      return;
+    }
+    final float shift = dp(6);
+    tv.animate()
+        .alpha(0f)
+        .translationY(-shift)
+        .setDuration(130)
+        .withEndAction(new Runnable() {
+          @Override
+          public void run() {
+            Object t = tv.getTag();
+            tv.setText(t == null ? "" : t.toString());
+            tv.setTranslationY(shift);
+            tv.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(260)
+                .setInterpolator(new DecelerateInterpolator())
+                .start();
+          }
+        })
+        .start();
+  }
+
   private int dp(int v) {
     return Math.round(v * ctx.getResources().getDisplayMetrics().density);
   }
@@ -451,7 +494,7 @@ public class IslandOverlay {
   private void createView() {
     wm = (WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE);
     int screenW = ctx.getResources().getDisplayMetrics().widthPixels;
-    compactW = dp(214);
+    compactW = dp(236);
     compactH = dp(40);
     expandedW = Math.min(screenW - dp(24), dp(360));
     expandedH = dp(180);
@@ -607,7 +650,7 @@ public class IslandOverlay {
             | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
         PixelFormat.TRANSLUCENT);
     params.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-    params.y = dp(8);
+    params.y = statusBarH() + dp(6); // di bawah status bar, tidak menutupi jam / ikon notifikasi
 
     applyProgress();
     wm.addView(root, params);
@@ -704,10 +747,12 @@ public class IslandOverlay {
 
   private void applyState() {
     if (root == null) return;
-    compactTitle.setText(title.length() > 0 ? title : "SpideyFy");
+    // Pil kecil menampilkan LIRIK yang sedang dinyanyikan; kalau tidak ada, judul lagu
+    String compactText = (playing && line.length() > 0) ? line : (title.length() > 0 ? title : "SpideyFy");
+    swapText(compactTitle, compactText);
     expTitle.setText(title);
     expArtist.setText(artist);
-    lyricTv.setText(line.length() > 0 ? line : "\u266A");
+    swapText(lyricTv, line.length() > 0 ? line : "\u266A");
     playIv.setType(playing ? IslandViews.PAUSE : IslandViews.PLAY);
     eqCompact.setRunning(playing);
     eqExpanded.setRunning(playing);

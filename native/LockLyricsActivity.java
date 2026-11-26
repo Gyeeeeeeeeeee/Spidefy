@@ -21,6 +21,7 @@ import android.view.View;
 import android.view.ViewOutlineProvider;
 import android.view.Window;
 import android.view.WindowManager;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -34,6 +35,8 @@ public class LockLyricsActivity extends Activity implements IslandOverlay.StateO
   private FrameLayout root;
   private GradientDrawable bg;
   private final TextView[] lyricTvs = new TextView[5];
+  private LinearLayout lyricBox;
+  private String[] prevLines = null;
   private ImageView coverIv;
   private TextView titleTv;
   private TextView artistTv;
@@ -143,7 +146,7 @@ public class LockLyricsActivity extends Activity implements IslandOverlay.StateO
         LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
     // lirik (5 baris, yang tengah menyala)
-    LinearLayout lyricBox = new LinearLayout(this);
+    lyricBox = new LinearLayout(this);
     lyricBox.setOrientation(LinearLayout.VERTICAL);
     lyricBox.setGravity(Gravity.CENTER_VERTICAL);
     for (int i = 0; i < 5; i++) {
@@ -369,21 +372,74 @@ public class LockLyricsActivity extends Activity implements IslandOverlay.StateO
     else coverIv.setImageDrawable(null);
     playIv.setType(st.playing ? IslandViews.PAUSE : IslandViews.PLAY);
 
+    applyLyrics();
+    updateProgress();
+  }
+
+  private static float lineAlpha(int i) {
+    int dist = Math.abs(i - 2);
+    return dist == 0 ? 1f : (dist == 1 ? 0.5f : 0.22f);
+  }
+
+  /** Lirik bergeser halus ke atas seperti di aplikasi musik; baris baru memudar masuk. */
+  private void applyLyrics() {
+    final String[] cur = new String[5];
     boolean any = false;
     for (int i = 0; i < 5; i++) {
-      String s = st.lines[i] == null ? "" : st.lines[i];
-      if (s.length() > 0) any = true;
-      lyricTvs[i].setText(s);
-      int dist = Math.abs(i - 2);
-      lyricTvs[i].setAlpha(dist == 0 ? 1f : (dist == 1 ? 0.5f : 0.22f));
-      lyricTvs[i].setVisibility(s.length() > 0 ? View.VISIBLE : View.GONE);
+      cur[i] = st.lines[i] == null ? "" : st.lines[i];
+      if (cur[i].length() > 0) any = true;
+    }
+    if (prevLines != null && java.util.Arrays.equals(prevLines, cur)) return; // tidak berubah
+    final String[] old = prevLines;
+    prevLines = cur;
+
+    // baris berikutnya naik jadi baris aktif?
+    boolean advance = old != null && cur[2].length() > 0 && cur[2].equals(old[3]);
+    int shift = 0;
+    if (advance) {
+      int h2 = lyricTvs[2].getHeight();
+      int h3 = lyricTvs[3].getHeight();
+      shift = (h2 + h3) / 2 + dp(12);
+    }
+
+    lyricBox.animate().cancel();
+    for (int i = 0; i < 5; i++) {
+      lyricTvs[i].animate().cancel();
+      lyricTvs[i].setText(cur[i]);
+      lyricTvs[i].setVisibility(cur[i].length() > 0 ? View.VISIBLE : View.GONE);
     }
     if (!any) {
       lyricTvs[2].setText("\u266A");
-      lyricTvs[2].setAlpha(0.6f);
       lyricTvs[2].setVisibility(View.VISIBLE);
     }
-    updateProgress();
+    float[] target = new float[5];
+    for (int i = 0; i < 5; i++) target[i] = (!any && i == 2) ? 0.6f : lineAlpha(i);
+
+    if (old == null) {
+      for (int i = 0; i < 5; i++) lyricTvs[i].setAlpha(target[i]);
+      lyricBox.setTranslationY(0f);
+      return;
+    }
+
+    if (advance) {
+      // alpha awal = alpha posisi lama dari baris yang sama (baris paling bawah baru: 0)
+      for (int i = 0; i < 5; i++) {
+        float from = i == 4 ? 0f : lineAlpha(i + 1);
+        lyricTvs[i].setAlpha(from);
+        lyricTvs[i].animate().alpha(target[i]).setDuration(420)
+            .setInterpolator(new DecelerateInterpolator()).start();
+      }
+      lyricBox.setTranslationY(shift);
+      lyricBox.animate().translationY(0f).setDuration(480)
+          .setInterpolator(new DecelerateInterpolator(1.6f)).start();
+    } else {
+      // lompat (geser lagu / ganti lagu): fade halus
+      lyricBox.setTranslationY(0f);
+      for (int i = 0; i < 5; i++) {
+        lyricTvs[i].setAlpha(0f);
+        lyricTvs[i].animate().alpha(target[i]).setDuration(320).start();
+      }
+    }
   }
 
   private void updateProgress() {
