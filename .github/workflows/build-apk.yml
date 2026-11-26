@@ -6,10 +6,6 @@ on:
 permissions:
   contents: write
 
-env:
-  # >>> GANTI baris ini dengan link Vercel kamu yang asli <<<
-  APP_URL: https://spidefy.vercel.app
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -25,12 +21,10 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - name: Cek APP_URL sudah diganti
+      - name: Build Web App (Vite)
         run: |
-          echo "APP_URL = $APP_URL"
-          case "$APP_URL" in
-            *GANTI*|"https://vercel.app"|"") echo "::error::APP_URL belum diisi link Vercel yang asli (lihat baris env di atas file ini)"; exit 1 ;;
-          esac
+          npm install
+          npm run build
 
       - name: Buat project Android (Capacitor)
         run: |
@@ -39,8 +33,7 @@ jobs:
           npm install @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7 @capacitor/filesystem@7
           npm install @anuradev/capacitor-background-mode --legacy-peer-deps || echo "::warning::Plugin latar belakang GAGAL dipasang"
           npm install @jofr/capacitor-media-session --legacy-peer-deps || echo "::warning::Plugin kontrol media GAGAL dipasang"
-          mkdir www
-          echo '<!doctype html><html><head><meta charset="utf-8"><title>SpideyFy</title></head><body style="background:#0b0b10"></body></html>' > www/index.html
+          cp -r "$GITHUB_WORKSPACE/dist" www
           cat > capacitor.config.json <<JSON
           {
             "appId": "app.vercel.spidefy",
@@ -50,21 +43,16 @@ jobs:
             "android": {
               "backgroundColor": "#0b0b10",
               "adjustMarginsForEdgeToEdge": "force"
-            },
-            "server": {
-              "url": "$APP_URL",
-              "androidScheme": "https"
             }
           }
           JSON
           npx cap add android
           sed -i 's#</manifest>#    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />\n</manifest>#' android/app/src/main/AndroidManifest.xml
           npx cap sync android
-          # Layar penuh tapi tidak menimpa status bar / tombol navigasi: latar gelap + ikon status terang
+
           STYLES=android/app/src/main/res/values/styles.xml
           sed -i 's#<item name="windowNoTitle">true</item>#<item name="windowNoTitle">true</item>\n        <item name="android:windowBackground">\#0b0b10</item>\n        <item name="android:windowLightStatusBar">false</item>#' "$STYLES"
 
-          # Jaga WebView & CPU tetap hidup saat app ke latar belakang / layar mati (supaya musik tidak dijeda)
           MA=$(find android/app/src/main/java -name MainActivity.java | head -1)
           if [ -n "$MA" ]; then
           PKG=$(grep -m1 '^package ' "$MA" | sed 's/package \(.*\);/\1/')
@@ -85,7 +73,6 @@ jobs:
             public void onCreate(Bundle savedInstanceState) {
               registerPlugin(IslandPlugin.class);
               super.onCreate(savedInstanceState);
-              // Android 13+: izin notifikasi harus diminta, kalau tidak widget pemutar tidak muncul
               if (android.os.Build.VERSION.SDK_INT >= 33
                   && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
                       != android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -99,10 +86,8 @@ jobs:
                   wakeLock.acquire();
                 }
               } catch (Exception e) {
-                // abaikan
               }
 
-              // Paksa WebView selalu mengira dirinya VISIBLE meski Activity masuk background
               try {
                 final WebView w = getBridge().getWebView();
                 if (w != null) {
@@ -117,7 +102,6 @@ jobs:
                   });
                 }
               } catch (Exception e) {
-                // abaikan
               }
             }
 
@@ -131,7 +115,6 @@ jobs:
                 w.resumeTimers();
                 w.dispatchWindowVisibilityChanged(View.VISIBLE);
               } catch (Exception e) {
-                // abaikan
               }
             }
 
@@ -146,7 +129,6 @@ jobs:
                   }, i * 500L);
                 }
               } catch (Exception e) {
-                // abaikan
               }
             }
 
@@ -174,26 +156,21 @@ jobs:
               try {
                 IslandOverlay.get(this).shutdown();
               } catch (Exception e) {
-                // abaikan
               }
               try {
                 if (wakeLock != null && wakeLock.isHeld()) {
                   wakeLock.release();
                 }
               } catch (Exception e) {
-                // abaikan
               }
               super.onDestroy();
             }
           }
           JAVA
-          # Plugin native Dynamic Island (overlay di atas app lain)
           for f in IslandOverlay IslandPlugin; do
             sed "s/__PKG__/$PKG/g" "$GITHUB_WORKSPACE/native/$f.java" > "$(dirname "$MA")/$f.java"
           done
           fi
-          echo "=== Manifest plugin latar belakang (untuk cek) ==="
-          cat node_modules/@anuradev/capacitor-background-mode/android/src/main/AndroidManifest.xml || echo "plugin tidak ditemukan"
 
       - name: Pastikan service media bertipe mediaPlayback
         run: |
@@ -201,11 +178,8 @@ jobs:
           for f in node_modules/@jofr/capacitor-media-session/android/src/main/AndroidManifest.xml node_modules/@anuradev/capacitor-background-mode/android/src/main/AndroidManifest.xml; do
             if [ -f "$f" ] && grep -q "<service" "$f" && ! grep -q "foregroundServiceType" "$f"; then
               sed -i 's#<service#<service android:foregroundServiceType="mediaPlayback"#' "$f"
-              echo "Diperbaiki: $f"
             fi
           done
-          echo "=== Manifest plugin media (untuk cek) ==="
-          cat node_modules/@jofr/capacitor-media-session/android/src/main/AndroidManifest.xml || echo "plugin media tidak ditemukan"
 
       - name: Pasang ikon aplikasi
         run: |
