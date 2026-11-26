@@ -1,10 +1,16 @@
 import YTMusic from 'ytmusic-api';
 
 let ytm = null;
-const headers = { 'content-type': 'application/json' };
+const headers = {
+  'content-type': 'application/json',
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'GET, OPTIONS',
+  'access-control-allow-headers': 'Content-Type',
+};
 const thumb = (t) => (Array.isArray(t) && t.length ? t[t.length - 1].url : undefined);
 
 export default async (req) => {
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers });
   try {
     if (!ytm) {
       ytm = new YTMusic();
