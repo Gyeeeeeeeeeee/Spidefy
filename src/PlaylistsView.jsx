@@ -257,12 +257,39 @@ async function searchSongsOnline(query, signal) {
   return (Array.isArray(data.songs) ? data.songs : []).map(toSong).filter(Boolean);
 }
 
+// Gabung beberapa daftar lagu secara bergantian, tanpa lagu dobel
+function mergeAlternating(lists, max = 40) {
+  const seen = new Set();
+  const merged = [];
+  const valid = lists.filter(Boolean);
+  const longest = Math.max(...valid.map((l) => l.length), 0);
+  for (let i = 0; i < longest && merged.length < max; i += 1) {
+    valid.forEach((l) => {
+      if (l[i] && !seen.has(l[i].id)) {
+        seen.add(l[i].id);
+        merged.push(l[i]);
+      }
+    });
+  }
+  return merged;
+}
+
 function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
   const [q, setQ] = useState('');
   const [sel, setSel] = useState([]);
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
+  // Rekomendasi otomatis (tanpa perlu memilih chip), ikut berubah setiap kali lagu ditambahkan
+  const [autoList, setAutoList] = useState([]);
+  const [autoLoading, setAutoLoading] = useState(true);
+  const [autoFailed, setAutoFailed] = useState(false);
+  const [freshIds, setFreshIds] = useState([]);
+  const [addingId, setAddingId] = useState(null);
+  const autoRef = useRef([]);
+  autoRef.current = autoList;
+  const tracksRef = useRef(pl.tracks || []);
+  tracksRef.current = pl.tracks || [];
 
   // Chip "Mirip playlist ini": ambil artis yang paling sering ada di playlist
   const similarChip = useMemo(() => {
@@ -278,7 +305,7 @@ function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
 
   const chips = useMemo(() => (similarChip ? [similarChip, ...TASTE_CHIPS] : TASTE_CHIPS), [similarChip]);
   const typed = q.trim();
-  const mode = typed.length >= 2 ? 'search' : sel.length ? 'reco' : 'local';
+  const mode = typed.length >= 2 ? 'search' : sel.length ? 'reco' : 'auto';
 
   const queries = useMemo(() => {
     if (mode === 'search') return [typed];
@@ -335,6 +362,62 @@ function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryKey]);
 
+  // Rekomendasi awal: dari artis yang paling sering ada di playlist (atau lagu populer kalau masih kosong)
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    const qs = similarChip ? similarChip.qs : ['lagu populer indonesia', 'top hits terbaru'];
+    (async () => {
+      try {
+        const lists = await Promise.all(qs.map((qq) => searchSongsOnline(qq, controller.signal).catch(() => null)));
+        if (cancelled) return;
+        if (lists.every((l) => l === null)) {
+          setAutoFailed(true);
+        } else {
+          setAutoList(mergeAlternating(lists, 30));
+        }
+      } finally {
+        if (!cancelled) setAutoLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Begitu lagu dipilih, langsung munculkan rekomendasi lagu mirip tepat di bawahnya
+  const refreshAfterAdd = async (song) => {
+    const artist = String(song.artist || '').split(',')[0].trim();
+    if (!artist) return;
+    setAddingId(song.id);
+    try {
+      const lists = await Promise.all([
+        searchSongsOnline(`${artist} lagu populer`).catch(() => null),
+        searchSongsOnline(`mirip ${song.title} ${artist}`).catch(() => null),
+      ]);
+      const taken = new Set([...autoRef.current.map((x) => x.id), ...tracksRef.current.map((x) => x.id), song.id]);
+      const fresh = mergeAlternating(lists, 12).filter((x) => !taken.has(x.id)).slice(0, 5);
+      if (!fresh.length) return;
+      setAutoList((prev) => {
+        const idx = prev.findIndex((x) => x.id === song.id);
+        const at = idx >= 0 ? idx + 1 : 0;
+        return [...prev.slice(0, at), ...fresh, ...prev.slice(at)];
+      });
+      setFreshIds(fresh.map((x) => x.id));
+      setTimeout(() => setFreshIds([]), 900);
+    } finally {
+      setAddingId(null);
+    }
+  };
+
+  const handleToggle = (song) => {
+    const had = pl.tracks.some((t) => t.id === song.id);
+    onToggle(pl.id, song);
+    if (!had) refreshAfterAdd(song);
+  };
+
   const localList = useMemo(() => {
     const needle = typed.toLowerCase();
     if (!needle) return songs;
@@ -342,7 +425,8 @@ function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
   }, [typed, songs]);
 
   // Kalau pencarian online gagal, tetap tampilkan hasil dari daftar yang ada
-  const list = mode === 'local' || failed ? localList : results;
+  const autoShown = autoList.length ? autoList : autoFailed ? localList : [];
+  const list = mode === 'auto' ? autoShown : failed ? localList : results;
 
   const toggleChip = (label) => {
     setSel((prev) => (prev.includes(label) ? prev.filter((x) => x !== label) : [...prev, label]));
@@ -353,7 +437,7 @@ function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
       ? `Hasil pencarian "${typed}"`
       : mode === 'reco'
       ? 'Rekomendasi sesuai seleramu'
-      : 'Dari daftar yang sedang tampil';
+      : 'Rekomendasi untukmu';
 
   return (
     <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/80" onClick={onClose}>
@@ -382,7 +466,7 @@ function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
           )}
         </div>
         <div>
-          <div className="text-[11px] font-bold text-neutral-300 mb-1.5">Pilih seleramu untuk dapat rekomendasi</div>
+          <div className="text-[11px] font-bold text-neutral-300 mb-1.5">Atau pilih selera tertentu</div>
           <div className="flex gap-1.5 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
             {chips.map((c) => {
               const on = sel.includes(c.label);
@@ -403,17 +487,18 @@ function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
         </div>
         <div className="text-[11px] font-bold text-neutral-400 -mb-1">{heading}</div>
         <div className="flex-1 overflow-y-auto space-y-1">
-          {loading && mode !== 'local' && <p className="text-xs text-neutral-400 px-1">Mencari lagu...</p>}
+          {((loading && mode !== 'auto') || (autoLoading && mode === 'auto' && !autoList.length)) && <p className="text-xs text-neutral-400 px-1">Mencari lagu...</p>}
           {failed && <p className="text-[11px] text-neutral-400 px-1">Pencarian online belum tersambung. Menampilkan dari daftar yang ada.</p>}
-          {!loading && list.length === 0 && <p className="text-xs text-neutral-400 px-1">Tidak ada lagu.</p>}
+          {!loading && !autoLoading && list.length === 0 && <p className="text-xs text-neutral-400 px-1">Tidak ada lagu.</p>}
           {list.map((s) => {
             const has = pl.tracks.some((t) => t.id === s.id);
             return (
+              <React.Fragment key={s.id}>
               <button
-                key={s.id}
                 type="button"
-                onClick={() => onToggle(pl.id, s)}
+                onClick={() => handleToggle(s)}
                 className="w-full flex items-center gap-3 px-2 py-1.5 rounded-lg bg-white/[0.04] text-left active:scale-[0.99]"
+                style={freshIds.includes(s.id) ? { animation: 'recIn 0.45s ease-out both' } : undefined}
               >
                 <img src={s.cover} alt="" className="w-10 h-10 rounded-md object-cover shrink-0" />
                 <span className="min-w-0 flex-1">
@@ -427,6 +512,10 @@ function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
                   {has ? <Check className="w-4 h-4 text-white" /> : <Plus className="w-3.5 h-3.5 text-white/70" />}
                 </span>
               </button>
+              {addingId === s.id && mode === 'auto' && (
+                <p className="text-[10.5px] px-3 py-1" style={{ color: suit.primary }}>Mencari lagu yang mirip...</p>
+              )}
+              </React.Fragment>
             );
           })}
         </div>
