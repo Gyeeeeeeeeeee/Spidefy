@@ -901,23 +901,25 @@ public class IslandOverlay {
   private void applyState() {
     if (root == null) return;
     // Pil kecil menampilkan LIRIK yang sedang dinyanyikan; kalau tidak ada, judul lagu
+    // Baris lirik: pakai 'line'; kalau kosong, pakai baris tengah dari 5 baris lirik (layar kunci)
+    String lyric = line.length() > 0 ? line : (lines[2] != null ? lines[2].trim() : "");
     long nowMs = SystemClock.uptimeMillis();
-    if (!line.equals(lastLineSeen)) {
+    if (!lyric.equals(lastLineSeen)) {
       if (lastLineAt > 0) {
         long dt = nowMs - lastLineAt;
         if (dt >= 1500 && dt <= 12000) estSpanMs = dt;
       }
-      lastLineSeen = line;
+      lastLineSeen = lyric;
       lastLineAt = nowMs;
     }
     long span = lineMs > 0 ? (long) lineMs : estSpanMs;
     if (compactTitle instanceof Marquee) ((Marquee) compactTitle).setSpanMs(span);
     if (lyricTv instanceof Marquee) ((Marquee) lyricTv).setSpanMs(span);
-    String compactText = (playing && line.length() > 0) ? line : (title.length() > 0 ? title : "SpideyFy");
+    String compactText = lyric.length() > 0 ? lyric : (title.length() > 0 ? title : "SpideyFy");
     swapText(compactTitle, compactText);
     expTitle.setText(title);
     expArtist.setText(artist);
-    swapText(lyricTv, line.length() > 0 ? line : "\u266A");
+    swapText(lyricTv, lyric.length() > 0 ? lyric : "\u266A");
     playIv.setType(playing ? IslandViews.PAUSE : IslandViews.PLAY);
     eqCompact.setRunning(playing);
     eqExpanded.setRunning(playing);
