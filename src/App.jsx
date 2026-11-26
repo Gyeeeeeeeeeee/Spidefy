@@ -37,10 +37,7 @@ import {
   Shuffle,
 } from 'lucide-react';
 import { PlaylistLibrary, PlaylistDetail } from './PlaylistsView.jsx';
-import { seedQueries, fetchSongs, mergeAlternating, shuffle, artistOf } from './reco.js';
-import { getSongFromPhone } from './nativeStorage.js';
-
-const API_BASE = 'https://vercel.app';
+import { seedQueries, fetchSongs, mergeAlternating, shuffle, artistOf, API_BASE } from './reco.js';
 
 // Paksa YouTube IFrame & WebView mengira layar selalu aktif (tidak pernah hidden/pause)
 if (typeof document !== 'undefined') {
@@ -1114,8 +1111,6 @@ export default function MusicPlayer() {
   const suggestSkipRef = useRef(false);
 
   const ytPlayerRef = useRef(null);
-  const offlineAudioRef = useRef(null);
-  const [offlineSrc, setOfflineSrc] = useState(null); 
   const ytContainerRef = useRef(null);
   const ytApiReadyRef = useRef(false);
   const lyricsScrollRef = useRef(null);
@@ -1666,13 +1661,6 @@ export default function MusicPlayer() {
       setMobilePane('lyrics');
       return;
     }
-        // Cek apakah lagu sudah tersimpan di memori HP
-    getSongFromPhone(track.videoId || track.id).then((localUrl) => {
-      setOfflineSrc(localUrl);
-      if (localUrl && ytPlayerRef.current && typeof ytPlayerRef.current.pauseVideo === 'function') {
-        ytPlayerRef.current.pauseVideo();
-      }
-    });
     setCurrentTrack(track);
     try {
       const pl = ytPlayerRef.current;
@@ -1751,12 +1739,6 @@ export default function MusicPlayer() {
   const handleTogglePlayPause = useCallback(() => {
     const next = !isPlayingRef.current;
     isPlayingRef.current = next;
-        if (offlineSrc && offlineAudioRef.current) {
-      if (next) offlineAudioRef.current.play().catch(() => {});
-      else offlineAudioRef.current.pause();
-      setIsPlaying(next);
-      return;
-        }
     const pl = ytPlayerRef.current;
     if (pl) {
       if (next && typeof pl.playVideo === 'function') pl.playVideo();
@@ -1966,10 +1948,6 @@ export default function MusicPlayer() {
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const targetSec = ratio * duration;
     setCurrentTime(targetSec);
-        if (offlineSrc && offlineAudioRef.current) {
-      offlineAudioRef.current.currentTime = targetSec;
-      return;
-        }
     if (ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
       ytPlayerRef.current.seekTo(targetSec, true);
     }
@@ -2152,10 +2130,6 @@ export default function MusicPlayer() {
   // Lompat ke detik tertentu
   const seekToSec = (sec) => {
     setCurrentTime(sec);
-        if (offlineSrc && offlineAudioRef.current) {
-      offlineAudioRef.current.currentTime = sec;
-      return;
-        }
     const pl = ytPlayerRef.current;
     if (pl && typeof pl.seekTo === 'function') pl.seekTo(sec, true);
   };
@@ -2784,21 +2758,6 @@ export default function MusicPlayer() {
               >
                 <div ref={ytContainerRef} className="w-full h-full" />
               </div>
-                  {offlineSrc && (
-                <audio
-                  ref={offlineAudioRef}
-                  src={offlineSrc}
-                  autoPlay={isPlaying}
-                  onEnded={() => handleTrackEnded(false)}
-                  onTimeUpdate={(e) => {
-                    if (!scrubbingRef.current) setCurrentTime(e.currentTarget.currentTime);
-                  }}
-                  onLoadedMetadata={(e) => {
-                    if (e.currentTarget.duration > 0) setDuration(e.currentTarget.duration);
-                  }}
-                />
-              )}
-              
               {playbackMode !== 'video' && (
                 <div className="hidden lg:flex items-center gap-3.5 p-3 rounded-2xl bg-black/40 border border-white/10 shrink-0">
                   <img
@@ -2842,9 +2801,6 @@ export default function MusicPlayer() {
                     <h2 className="text-base font-extrabold text-white truncate">
                       {currentTrack?.title || 'Select a Track'}
                     </h2>
-                    {offlineSrc && (
-                      <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-black tracking-wider text-white bg-white/15">OFFLINE</span>
-                    )}
                     <p className="text-xs text-neutral-400 truncate">{currentTrack?.artist || 'SpideyFy'}</p>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">

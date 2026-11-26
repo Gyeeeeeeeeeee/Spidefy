@@ -14,17 +14,11 @@ import {
   Trash2,
   X,
   Minus,
-    ListPlus,
+  ListPlus,
   RefreshCw,
   Video,
-  Download,
-  Loader2,
 } from 'lucide-react';
-import { seedQueries } from './reco.js';
-import { saveSongToPhone, getAllSavedSongIds, isNativeStorageSupported } from './nativeStorage.js';
-
-const API_BASE = 'https://vercel.app';
-
+import { seedQueries, API_BASE } from './reco.js';
 
 /* ---------- Helpers ---------- */
 
@@ -934,32 +928,7 @@ export function PlaylistDetail({
   const [showAdd, setShowAdd] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const rootRef = useRef(null);
-  const [downloadedIds, setDownloadedIds] = useState([]);
-  const [downloadingId, setDownloadingId] = useState(null);
 
-  useEffect(() => {
-    getAllSavedSongIds().then(setDownloadedIds);
-  }, [pl.id]);
-
-  const handleDownloadPlaylist = async () => {
-    if (!isNativeStorageSupported()) {
-      alert('Fitur download ke memori HP hanya tersedia di APK versi terbaru.');
-      return;
-    }
-    for (const track of pl.tracks) {
-      const vid = track.videoId || track.id;
-      if (downloadedIds.includes(vid)) continue;
-      setDownloadingId(vid);
-      try {
-        await saveSongToPhone(vid);
-        setDownloadedIds((prev) => [...prev, vid]);
-      } catch (err) {
-        console.error('Gagal download:', track.title, err);
-      }
-    }
-    setDownloadingId(null);
-  };
-  
   useEffect(() => {
     if (rootRef.current && rootRef.current.scrollIntoView) {
       rootRef.current.scrollIntoView({ block: 'start' });
@@ -1138,16 +1107,6 @@ export function PlaylistDetail({
           >
             <Pencil className="w-4 h-4" /> Nama & detail
           </button>
-                <button
-            type="button"
-            onClick={handleDownloadPlaylist}
-            disabled={!!downloadingId || pl.tracks.length === 0}
-            className="shrink-0 inline-flex items-center gap-2 px-4 py-2.5 rounded-full bg-black/40 text-sm font-bold text-white active:scale-95 disabled:opacity-50"
-          >
-            {downloadingId ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-            {downloadingId ? 'Mengunduh...' : 'Download'}
-          </button>
-          
         </div>
       </div>
 
@@ -1187,14 +1146,7 @@ export function PlaylistDetail({
                 <div className="text-[15px] font-bold truncate" style={{ color: active ? suit.primary : '#fff' }}>
                   {t.title}
                 </div>
-                      
-                  <div className="text-xs text-neutral-400 truncate flex items-center gap-1.5">
-                  {downloadedIds.includes(t.videoId || t.id) && (
-                    <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-500 text-black text-[9px] font-black shrink-0">✓</span>
-                  )}
-                  <span className="truncate">{t.artist}</span>
-                </div>
-
+                <div className="text-xs text-neutral-400 truncate">{t.artist}</div>
               </div>
               {editMode ? (
                 <div className="flex items-center shrink-0">
