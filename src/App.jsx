@@ -1102,7 +1102,7 @@ export default function MusicPlayer() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [islandOn, setIslandOn] = useState(SAVED_PREFS.islandOn === true); // default MATI
   const [islandLyrics, setIslandLyrics] = useState(SAVED_PREFS.islandLyrics !== false);
-  const [islandTheme, setIslandTheme] = useState(SAVED_PREFS.islandTheme === 'dark' ? 'dark' : 'spidey');
+  const [islandTheme, setIslandTheme] = useState(SAVED_PREFS.islandTheme === 'spidey' ? 'spidey' : 'dark');
   const [lockLyrics, setLockLyrics] = useState(SAVED_PREFS.lockLyrics === true); // default MATI
   const [notifLyrics, setNotifLyrics] = useState(SAVED_PREFS.notifLyrics !== false);
   const [playbackMode, setPlaybackMode] = useState(SAVED_PREFS.mode === 'video' ? 'video' : 'audio'); // 'audio' | 'video'
