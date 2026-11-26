@@ -1948,6 +1948,17 @@ export default function MusicPlayer() {
     pushIslandRef.current();
   }, [currentTrack, islandLine, lockLinesKey, isPlaying, duration]);
 
+  // kirim lirik bertimestamp ke native: pil Island menghitung baris aktif sendiri,
+  // jadi lirik tetap jalan walau JavaScript ditahan saat app di-Home
+  useEffect(() => {
+    if (!ISLAND_OK) return;
+    const ok = islandLyrics && lyricsSynced && Array.isArray(lyrics) && lyrics.length > 0;
+    Island.setLyrics({
+      times: ok ? lyrics.map((l) => Number(l.time) || 0) : [],
+      texts: ok ? lyrics.map((l) => String(l.text || '').trim()) : [],
+    }).catch(() => {});
+  }, [lyrics, lyricsSynced, islandLyrics, currentTrack]);
+
   // kalau posisi lompat (seek), kabari Island supaya progress-nya ikut
   useEffect(() => {
     if (!ISLAND_OK || !isPlaying) return;
