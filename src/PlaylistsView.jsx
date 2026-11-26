@@ -288,6 +288,8 @@ function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
   const [addingId, setAddingId] = useState(null);
   const autoRef = useRef([]);
   autoRef.current = autoList;
+  const resultsRef = useRef([]);
+  resultsRef.current = results;
   const tracksRef = useRef(pl.tracks || []);
   tracksRef.current = pl.tracks || [];
 
@@ -397,14 +399,17 @@ function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
         searchSongsOnline(`${artist} lagu populer`).catch(() => null),
         searchSongsOnline(`mirip ${song.title} ${artist}`).catch(() => null),
       ]);
-      const taken = new Set([...autoRef.current.map((x) => x.id), ...tracksRef.current.map((x) => x.id), song.id]);
+      const taken = new Set([...autoRef.current.map((x) => x.id), ...resultsRef.current.map((x) => x.id), ...tracksRef.current.map((x) => x.id), song.id]);
       const fresh = mergeAlternating(lists, 12).filter((x) => !taken.has(x.id)).slice(0, 5);
       if (!fresh.length) return;
-      setAutoList((prev) => {
+      const insertAfter = (prev) => {
         const idx = prev.findIndex((x) => x.id === song.id);
         const at = idx >= 0 ? idx + 1 : 0;
         return [...prev.slice(0, at), ...fresh, ...prev.slice(at)];
-      });
+      };
+      // Rekomendasi muncul tepat di bawah lagu yang baru ditambahkan, baik di daftar awal maupun saat mencari
+      setAutoList(insertAfter);
+      if (mode !== 'auto') setResults(insertAfter);
       setFreshIds(fresh.map((x) => x.id));
       setTimeout(() => setFreshIds([]), 900);
     } finally {
@@ -512,7 +517,7 @@ function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
                   {has ? <Check className="w-4 h-4 text-white" /> : <Plus className="w-3.5 h-3.5 text-white/70" />}
                 </span>
               </button>
-              {addingId === s.id && mode === 'auto' && (
+              {addingId === s.id && (
                 <p className="text-[10.5px] px-3 py-1" style={{ color: suit.primary }}>Mencari lagu yang mirip...</p>
               )}
               </React.Fragment>
