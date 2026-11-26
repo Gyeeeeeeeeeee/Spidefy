@@ -1,5 +1,7 @@
 package __PKG__;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
 import android.app.KeyguardManager;
 import android.content.BroadcastReceiver;
@@ -8,7 +10,13 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.LinearGradient;
+import android.graphics.Paint;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffXfermode;
+import android.graphics.Shader;
 import android.graphics.Outline;
 import android.graphics.PixelFormat;
 import android.graphics.Typeface;
@@ -58,6 +66,91 @@ public class IslandOverlay {
       double wd = wn * Math.sqrt(1.0 - zeta * zeta);
       double e = Math.exp(-zeta * wn * t);
       return (float) (1.0 - e * (Math.cos(wd * t) + (zeta * wn / wd) * Math.sin(wd * t)));
+    }
+  }
+
+  /**
+   * Teks satu baris yang berjalan halus dari kiri ke kanan baca (teks bergeser ke kiri)
+   * kalau terlalu panjang, supaya seluruh lirik terbaca. Tepinya memudar.
+   */
+  private static class Marquee extends TextView {
+    private boolean ready = false;
+    private float textW = 0f;
+    private long t0 = 0L;
+    private final float d;
+    private final Paint fade = new Paint();
+    private long spanMs = 4000L;
+
+    void setSpanMs(long v) {
+      if (v > 0) spanMs = v;
+    }
+
+    Marquee(Context c) {
+      super(c);
+      d = c.getResources().getDisplayMetrics().density;
+      fade.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_IN));
+      ready = true;
+      resetScroll();
+    }
+
+    @Override
+    public void setText(CharSequence t, BufferType type) {
+      super.setText(t, type);
+      if (ready) resetScroll();
+    }
+
+    private void resetScroll() {
+      textW = getPaint().measureText(getText().toString());
+      t0 = SystemClock.uptimeMillis();
+      invalidate();
+    }
+
+    @Override
+    protected void onDraw(Canvas c) {
+      if (getLayout() == null) {
+        super.onDraw(c);
+        return;
+      }
+      float W = getWidth();
+      float H = getHeight();
+      float w = W - getPaddingLeft() - getPaddingRight();
+      String s = getText().toString();
+      Paint p = getPaint();
+      p.setColor(getCurrentTextColor());
+      float base = getBaseline();
+      if (w <= 0f || textW <= w) {
+        c.drawText(s, getPaddingLeft() + (w - textW) / 2f, base, p);
+        return;
+      }
+      float range = textW - w + 10f * d;
+      long el = SystemClock.uptimeMillis() - t0;
+      // Jalan selama baris lirik ini dinyanyikan, supaya selesai terbaca sebelum baris berikutnya
+      float span = (float) spanMs;
+      float hold = Math.min(600f, span * 0.15f);
+      float avail = Math.max(500f, span * 0.88f - hold - 150f);
+      float minDur = range / (150f * d) * 1000f; // tidak lebih cepat dari ini
+      float maxDur = range / (22f * d) * 1000f;  // tidak lebih lambat dari ini
+      float dur = Math.max(minDur, Math.min(maxDur, avail));
+      float f = el <= hold ? 0f : Math.min(1f, (el - hold) / dur);
+      float e = f * f * (3f - 2f * f);
+      float x = getPaddingLeft() - range * e;
+
+      int sc = c.saveLayer(0f, 0f, W, H, null);
+      c.drawText(s, x, base, p);
+      float edge = Math.min(16f * d, W / 4f);
+      float la = Math.min(1f, e * 10f);
+      float ra = Math.min(1f, (1f - e) * 10f);
+      int[] cols = new int[] {
+          ((int) (255f * (1f - la))) << 24,
+          0xFF000000,
+          0xFF000000,
+          ((int) (255f * (1f - ra))) << 24
+      };
+      fade.setShader(new LinearGradient(0f, 0f, W, 0f, cols,
+          new float[] { 0f, edge / W, 1f - edge / W, 1f }, Shader.TileMode.CLAMP));
+      c.drawRect(0f, 0f, W, H, fade);
+      c.restoreToCount(sc);
+      if (f < 1f) postInvalidateOnAnimation();
     }
   }
 
@@ -121,8 +214,16 @@ public class IslandOverlay {
   private FrameLayout playWrap;
   private GradientDrawable playBg;
   private WindowManager.LayoutParams params;
+  private FrameLayout host;
+  private boolean windowBig = false;
+  private int expandedWinW;
+  private int expandedWinH;
   private ValueAnimator anim;
   private boolean hiding = false;
+  private volatile double lineMs = 0;
+  private String lastLineSeen = "";
+  private long lastLineAt = 0L;
+  private long estSpanMs = 4000L;
   private float prog = 0f;
   private float radiusPx = 0f;
   private int compactW;
@@ -214,6 +315,11 @@ public class IslandOverlay {
         ensureReceiver();
       }
     });
+  }
+
+  /** Lama baris lirik yang sedang aktif (ms), dikirim dari app. 0 = tidak diketahui. */
+  public void setLineMs(double v) {
+    lineMs = v;
   }
 
   public void update(final String t, final String a, final String cUrl, final String l, final String[] ls,
@@ -452,13 +558,15 @@ public class IslandOverlay {
     ui.removeCallbacks(tick);
     if (anim != null) anim.cancel();
     anim = null;
-    if (root != null && wm != null) {
+    if (host != null && wm != null) {
       try {
-        wm.removeView(root);
+        wm.removeView(host);
       } catch (Exception e) {
         // abaikan
       }
     }
+    host = null;
+    windowBig = false;
     root = null;
     hiding = false;
     appliedTheme = "";
@@ -487,6 +595,17 @@ public class IslandOverlay {
     t.setTypeface(bold ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
     t.setSingleLine(true);
     t.setEllipsize(TextUtils.TruncateAt.END);
+    t.setIncludeFontPadding(false);
+    return t;
+  }
+
+  private TextView makeMarquee(int sp, boolean bold, int color) {
+    Marquee t = new Marquee(ctx);
+    t.setTextSize(sp);
+    t.setTextColor(color);
+    t.setTypeface(bold ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
+    t.setSingleLine(true);
+    t.setEllipsize(null);
     t.setIncludeFontPadding(false);
     return t;
   }
@@ -525,7 +644,7 @@ public class IslandOverlay {
     compact.setPadding(dp(5), 0, dp(5), 0);
     compactCover = makeCover(dp(15));
     compact.addView(compactCover, new LinearLayout.LayoutParams(dp(30), dp(30)));
-    compactTitle = makeText(13, true, Color.WHITE);
+    compactTitle = makeMarquee(13, true, Color.WHITE);
     compactTitle.setGravity(Gravity.CENTER);
     LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
     tlp.leftMargin = dp(8);
@@ -578,7 +697,7 @@ public class IslandOverlay {
     expandedBox.addView(head, new LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-    lyricTv = makeText(13, true, Color.WHITE);
+    lyricTv = makeMarquee(13, true, Color.WHITE);
     lyricTv.setGravity(Gravity.CENTER);
     LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -652,8 +771,21 @@ public class IslandOverlay {
     params.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
     params.y = statusBarH() + dp(6); // di bawah status bar, tidak menutupi jam / ikon notifikasi
 
+    // Jendela dibungkus 'host'. Animasi buka/tutup hanya mengubah ukuran view di dalamnya
+    // (bukan jendela tiap frame), jadi jauh lebih halus.
+    host = new FrameLayout(ctx);
+    host.setClipChildren(false);
+    host.addView(root, new FrameLayout.LayoutParams(compactW, compactH, Gravity.TOP | Gravity.CENTER_HORIZONTAL));
+    expandedWinW = expandedW + dp(24);
+    expandedWinH = expandedH + dp(24);
+    windowBig = expanded;
+    if (windowBig) {
+      params.width = expandedWinW;
+      params.height = expandedWinH;
+    }
+
     applyProgress();
-    wm.addView(root, params);
+    wm.addView(host, params);
 
     // muncul dengan gerakan pegas
     root.setAlpha(0f);
@@ -682,11 +814,18 @@ public class IslandOverlay {
   private void animateTo(boolean expand) {
     if (root == null) return;
     if (anim != null) anim.cancel();
+    if (expand) setWindowBig(true);
     final float from = prog;
     final float to = expand ? 1f : 0f;
     anim = ValueAnimator.ofFloat(0f, 1f);
     anim.setDuration(expand ? 560 : 420);
     anim.setInterpolator(SPRING);
+    anim.addListener(new AnimatorListenerAdapter() {
+      @Override
+      public void onAnimationEnd(Animator a) {
+        if (!expanded && prog <= 0.02f) setWindowBig(false);
+      }
+    });
     anim.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
       @Override
       public void onAnimationUpdate(ValueAnimator a) {
@@ -701,8 +840,14 @@ public class IslandOverlay {
   private void applyProgress() {
     if (root == null || params == null) return;
     float p = prog;
-    params.width = Math.round(compactW + (expandedW - compactW) * p);
-    params.height = Math.round(compactH + (expandedH - compactH) * p);
+    FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) root.getLayoutParams();
+    int nw = Math.round(compactW + (expandedW - compactW) * p);
+    int nh = Math.round(compactH + (expandedH - compactH) * p);
+    if (lp != null && (lp.width != nw || lp.height != nh)) {
+      lp.width = nw;
+      lp.height = nh;
+      root.setLayoutParams(lp);
+    }
     float big = dp(30);
     radiusPx = compactH / 2f + (big - compactH / 2f) * clamp01(p);
     float ca = clamp01(1f - p * 2.4f);
@@ -712,8 +857,16 @@ public class IslandOverlay {
     expandedBox.setAlpha(ea);
     expandedBox.setVisibility(ea > 0.01f ? View.VISIBLE : View.INVISIBLE);
     root.invalidateOutline();
+  }
+
+  /** Ubah ukuran jendela hanya sekali saat buka / setelah selesai tutup. */
+  private void setWindowBig(boolean big) {
+    if (host == null || params == null || windowBig == big) return;
+    windowBig = big;
+    params.width = big ? expandedWinW : compactW;
+    params.height = big ? expandedWinH : compactH;
     try {
-      wm.updateViewLayout(root, params);
+      wm.updateViewLayout(host, params);
     } catch (Exception e) {
       // abaikan
     }
@@ -748,6 +901,18 @@ public class IslandOverlay {
   private void applyState() {
     if (root == null) return;
     // Pil kecil menampilkan LIRIK yang sedang dinyanyikan; kalau tidak ada, judul lagu
+    long nowMs = SystemClock.uptimeMillis();
+    if (!line.equals(lastLineSeen)) {
+      if (lastLineAt > 0) {
+        long dt = nowMs - lastLineAt;
+        if (dt >= 1500 && dt <= 12000) estSpanMs = dt;
+      }
+      lastLineSeen = line;
+      lastLineAt = nowMs;
+    }
+    long span = lineMs > 0 ? (long) lineMs : estSpanMs;
+    if (compactTitle instanceof Marquee) ((Marquee) compactTitle).setSpanMs(span);
+    if (lyricTv instanceof Marquee) ((Marquee) lyricTv).setSpanMs(span);
     String compactText = (playing && line.length() > 0) ? line : (title.length() > 0 ? title : "SpideyFy");
     swapText(compactTitle, compactText);
     expTitle.setText(title);

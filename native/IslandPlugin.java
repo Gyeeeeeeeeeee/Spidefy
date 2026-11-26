@@ -82,6 +82,8 @@ public class IslandPlugin extends Plugin {
       }
     }
 
+    Double lineMs = call.getDouble("lineMs", 0.0);
+    IslandOverlay.get(getContext()).setLineMs(lineMs == null ? 0.0 : lineMs.doubleValue());
     IslandOverlay.get(getContext()).update(
         call.getString("title", ""),
         call.getString("artist", ""),
