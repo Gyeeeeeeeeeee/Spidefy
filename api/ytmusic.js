@@ -4,6 +4,14 @@ let ytm = null;
 const thumb = (t) => (Array.isArray(t) && t.length ? t[t.length - 1].url : undefined);
 
 export default async function handler(req, res) {
+  // Izinkan APK Android (asal localhost) memanggil API ini
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
   try {
     if (!ytm) {
       ytm = new YTMusic();
