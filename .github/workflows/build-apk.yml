@@ -169,7 +169,7 @@ jobs:
             }
           }
           JAVA
-          for f in IslandOverlay IslandPlugin IslandViews LockLyricsActivity; do
+          for f in IslandOverlay IslandPlugin IslandViews KineticLyricsView LockLyricsActivity; do
             sed "s/__PKG__/$PKG/g" "$GITHUB_WORKSPACE/native/$f.java" > "$(dirname "$MA")/$f.java"
           done
           fi
