@@ -38,6 +38,8 @@ export default function CoverImg({ src, videoId, alt = '', className = '', style
 
   return (
     <img
+      loading="lazy"
+      decoding="async"
       {...rest}
       src={chain[i]}
       alt={alt}

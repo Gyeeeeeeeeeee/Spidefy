@@ -853,6 +853,8 @@ function ChibiSpidey({ color }) {
   );
 }
 
+const HomeViewM = React.memo(HomeView);
+
 function NoLyrics({ suit, loading, instrumental, seed }) {
   const idx = String(seed || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % SPIDEY_QUOTES.length;
   return (
@@ -1856,6 +1858,10 @@ export default function MusicPlayer() {
     }
   };
 
+  const playFromListRef = useRef(null);
+  playFromListRef.current = (t) => handleSelectTrack(t, true);
+  const playFromList = useCallback((t) => playFromListRef.current(t), []);
+
   const handleTogglePlayPause = useCallback(() => {
     const next = !isPlayingRef.current;
     isPlayingRef.current = next;
@@ -2502,7 +2508,7 @@ export default function MusicPlayer() {
 
   const windowClass = useMemo(() => {
     const base =
-      'w-full h-full flex flex-col overflow-hidden max-lg:rounded-none! max-lg:border-0! border border-white/15 bg-[#121218]/80 lg:backdrop-blur-2xl shadow-[0_30px_90px_rgba(0,0,0,0.82)] transition-all duration-500';
+      'w-full h-full flex flex-col overflow-hidden max-lg:rounded-none! max-lg:border-0! border border-white/15 bg-[#121218]/80 lg:backdrop-blur-2xl max-lg:shadow-none shadow-[0_30px_90px_rgba(0,0,0,0.82)] transition-all duration-500';
     if (windowMode === 'fullscreen') {
       return `${base} max-w-none max-h-none rounded-xl`;
     }
@@ -2546,7 +2552,7 @@ export default function MusicPlayer() {
       </svg>
 
       {/* macOS Top Menu Bar */}
-      <header className="relative z-20 h-7 px-3.5 flex items-center justify-between bg-[#0b0b10]/60 backdrop-blur-2xl backdrop-saturate-150 border-b border-white/[0.09] shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] text-[11.5px] font-medium text-neutral-200 shrink-0">
+      <header className="relative z-20 h-7 px-3.5 flex items-center justify-between bg-[#0b0b10]/90 lg:bg-[#0b0b10]/60 lg:backdrop-blur-2xl lg:backdrop-saturate-150 border-b border-white/[0.09] shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] text-[11.5px] font-medium text-neutral-200 shrink-0">
         <div className="flex items-center gap-2.5">
           <span
             className="w-2 h-2 rounded-full"
@@ -2825,12 +2831,12 @@ export default function MusicPlayer() {
                 )}
 
                 {activeCatalogTab === 'home' && (
-                  <HomeView
+                  <HomeViewM
                     songs={catalog.songs}
                     currentTrack={currentTrack}
                     isPlaying={isPlaying}
                     suit={suit}
-                    onPlay={(t) => handleSelectTrack(t, true)}
+                    onPlay={playFromList}
                     history={history}
                     seeds={tasteSeeds}
                     ownedIds={ownedIds}
@@ -3185,16 +3191,28 @@ export default function MusicPlayer() {
                 </div>
               </div>
 
-              {lyrics.length > 0 && (
+              <div className="shrink-0 self-end flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setFullLyrics(true)}
-                  className="shrink-0 self-end inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/10 text-[11px] font-bold text-white active:scale-95 transition"
+                  onClick={() => { setActiveCatalogTab('settings'); setMobilePane('catalog'); }}
+                  aria-label="Sleep Timer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold text-white active:scale-95 transition tabular-nums"
+                  style={{ background: sleepLeft > 0 || sleepEot ? suit.primary : 'rgba(255,255,255,0.1)' }}
                 >
-                  <Maximize2 className="w-3.5 h-3.5" />
-                  <span>Lirik layar penuh</span>
+                  <Moon className="w-3.5 h-3.5" />
+                  <span>{sleepEot ? 'Akhir lagu' : sleepLeft > 0 ? fmtSleep(sleepLeft) : 'Timer'}</span>
                 </button>
-              )}
+                {lyrics.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setFullLyrics(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/10 text-[11px] font-bold text-white active:scale-95 transition"
+                  >
+                    <Maximize2 className="w-3.5 h-3.5" />
+                    <span>Lirik layar penuh</span>
+                  </button>
+                )}
+              </div>
 
               {/* Synced Auto-Scrolling Lyrics Panel */}
               <div
@@ -3619,7 +3637,7 @@ export default function MusicPlayer() {
       )}
 
       {/* Navigasi bawah (HP) */}
-      <nav aria-label="Navigasi" className="lg:hidden fixed bottom-0 inset-x-0 z-30 h-14 flex items-stretch px-1.5 bg-[#0b0b10]/70 backdrop-blur-2xl backdrop-saturate-150 border-t border-white/[0.12]">
+      <nav aria-label="Navigasi" className="lg:hidden fixed bottom-0 inset-x-0 z-30 h-14 flex items-stretch px-1.5 bg-[#0b0b10]/95 lg:bg-[#0b0b10]/70 lg:backdrop-blur-2xl lg:backdrop-saturate-150 border-t border-white/[0.12]">
         <span
           aria-hidden="true"
           className="absolute top-1.5 bottom-1.5 rounded-2xl pointer-events-none"
