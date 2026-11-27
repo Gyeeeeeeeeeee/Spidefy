@@ -1007,7 +1007,7 @@ function BackupSection({ suit }) {
   );
 }
 
-function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, backendConnected, islandOn, setIslandOn, islandLyrics, setIslandLyrics, notifLyrics, setNotifLyrics, islandTheme, setIslandTheme, lockLyrics, setLockLyrics, sleepLeft = 0, sleepEot = false, onSleepStart, onSleepEot, onSleepAdd, onSleepCancel }) {
+function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, backendConnected, islandOn, setIslandOn, islandLyrics, setIslandLyrics, notifLyrics, setNotifLyrics, islandTheme, setIslandTheme, lockLyrics, setLockLyrics, lockStyle, setLockStyle, sleepLeft = 0, sleepEot = false, onSleepStart, onSleepEot, onSleepAdd, onSleepCancel }) {
   const [sleepCustom, setSleepCustom] = useState('');
   return (
     <div className="stagger space-y-4 pb-4">
@@ -1158,6 +1158,46 @@ function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, 
             </div>
           </div>
         )}
+        {ISLAND_OK && (
+          <div className="mt-2 rounded-xl bg-white/[0.05] p-3">
+            <div className="text-xs font-bold text-white mb-0.5">Gaya lirik layar kunci</div>
+            <div className="text-[11px] text-neutral-400 mb-2">Berlaku kalau "Lirik di layar kunci" menyala.</div>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { id: 'classic', label: 'Klasik', sub: 'Default: 5 baris, baris aktif menyala', bg: 'linear-gradient(160deg,#4A0B14,#140A2E,#05060F)' },
+                { id: 'webtype', label: 'Webtype', sub: 'Kata besar muncul satu-satu, hitam pekat', bg: '#000' },
+              ].map((t) => {
+                const on = lockStyle === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setLockStyle(t.id)}
+                    aria-pressed={on}
+                    className="rounded-xl p-2.5 text-left border active:scale-95 transition"
+                    style={{
+                      borderColor: on ? suit.primary : 'rgba(255,255,255,0.12)',
+                      background: t.bg,
+                      boxShadow: on ? `0 0 0 2px ${suit.primary}66` : 'none',
+                    }}
+                  >
+                    {t.id === 'webtype' ? (
+                      <span className="block leading-[0.95] font-black text-white text-[17px] tracking-tight mb-1">
+                        the<br />cash<br />on
+                      </span>
+                    ) : (
+                      <span className="block text-[11px] font-bold text-white/45 leading-tight mb-1">
+                        baris lama<br /><span className="text-white text-[13px]">baris aktif</span><br />baris lama
+                      </span>
+                    )}
+                    <span className="block text-xs font-extrabold text-white">{t.label}</span>
+                    <span className="block text-[10px] text-white/70">{t.sub}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
       <div>
         <h3 className="text-sm font-black italic text-white mb-2">Latar belakang</h3>
@@ -1240,6 +1280,7 @@ export default function MusicPlayer() {
   const [islandLyrics, setIslandLyrics] = useState(SAVED_PREFS.islandLyrics !== false);
   const [islandTheme, setIslandTheme] = useState(SAVED_PREFS.islandTheme === 'spidey' ? 'spidey' : 'dark');
   const [lockLyrics, setLockLyrics] = useState(SAVED_PREFS.lockLyrics === true); // default MATI
+  const [lockStyle, setLockStyle] = useState(SAVED_PREFS.lockStyle === 'webtype' ? 'webtype' : 'classic');
   const [notifLyrics, setNotifLyrics] = useState(SAVED_PREFS.notifLyrics !== false);
   const [playbackMode, setPlaybackMode] = useState(SAVED_PREFS.mode === 'video' ? 'video' : 'audio'); // 'audio' | 'video'
   const [currentTime, setCurrentTime] = useState(RESTORED_TIME);
@@ -2133,6 +2174,21 @@ export default function MusicPlayer() {
     Island.setLockLyrics({ enabled: lockLyrics && islandOn }).catch(() => {});
   }, [lockLyrics, islandOn]);
 
+  useEffect(() => {
+    if (!ISLAND_OK) return;
+    Island.setLockStyle({ style: lockStyle }).catch(() => {});
+  }, [lockStyle]);
+
+  // lirik bertimestamp khusus layar kunci (gaya Webtype menghitung baris & animasinya sendiri di native)
+  useEffect(() => {
+    if (!ISLAND_OK) return;
+    const ok = lockLyrics && lockStyle === 'webtype' && lyricsSynced && Array.isArray(lyrics) && lyrics.length > 0;
+    Island.setLockLyricData({
+      times: ok ? lyrics.map((l) => Number(l.time) || 0) : [],
+      texts: ok ? lyrics.map((l) => String(l.text || '').trim()) : [],
+    }).catch(() => {});
+  }, [lyrics, lyricsSynced, lockLyrics, lockStyle, currentTrack]);
+
   // 5 baris lirik (2 sebelum, sekarang, 2 sesudah) untuk layar kunci
   const lockLines =
     lockLyrics && Array.isArray(lyrics) && lyrics.length > 0 && activeLineIndex >= 0
@@ -2302,9 +2358,10 @@ export default function MusicPlayer() {
       islandLyrics,
       islandTheme,
       lockLyrics,
+      lockStyle,
       notifLyrics,
     });
-  }, [likedIds, suitId, volume, playbackMode, repeatMode, shuffleOn, islandOn, islandLyrics, islandTheme, lockLyrics, notifLyrics]);
+  }, [likedIds, suitId, volume, playbackMode, repeatMode, shuffleOn, islandOn, islandLyrics, islandTheme, lockLyrics, lockStyle, notifLyrics]);
 
   useEffect(() => {
     writeSaved('spideyfy-history', history);
@@ -2938,6 +2995,8 @@ export default function MusicPlayer() {
                     setIslandTheme={setIslandTheme}
                     lockLyrics={lockLyrics}
                     setLockLyrics={handleSetLock}
+                    lockStyle={lockStyle}
+                    setLockStyle={setLockStyle}
                     notifLyrics={notifLyrics}
                     setNotifLyrics={setNotifLyrics}
                     sleepLeft={sleepLeft}
