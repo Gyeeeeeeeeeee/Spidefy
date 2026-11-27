@@ -39,6 +39,30 @@ body { margin: 0; background: #0b0b10; }
 /* Perpindahan panel Katalog <-> Lirik di HP */
 @media (max-width: 1023px) { .pane-swap { animation: paneIn 460ms var(--ease-spring) backwards; } }
 
+/* ===== Banner Beranda bergerak ===== */
+@keyframes heroDrift { 0%, 100% { transform: translate3d(0, 0, 0) scale(1.06); } 50% { transform: translate3d(-2.5%, -1.5%, 0) scale(1.13); } }
+@keyframes heroShine { 0% { transform: translate3d(-130%, 0, 0) skewX(-18deg); } 55%, 100% { transform: translate3d(340%, 0, 0) skewX(-18deg); } }
+@keyframes heroSlideA { 0%, 100% { transform: translate3d(0, 0, 0); } 50% { transform: translate3d(-10px, 6px, 0); } }
+@keyframes heroSlideB { 0%, 100% { transform: translate3d(0, 0, 0); } 50% { transform: translate3d(8px, -6px, 0); } }
+@keyframes heroPulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.85; } }
+@keyframes heroTwinkle { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.25; transform: scale(0.6); } }
+@keyframes heroWiggle { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(3deg) scale(1.05); } }
+@keyframes heroDrip { 0%, 100% { transform: translate3d(0, 0, 0); } 50% { transform: translate3d(0, 5px, 0); } }
+@keyframes heroDraw { 0% { stroke-dashoffset: 1; opacity: 1; } 40% { stroke-dashoffset: 0; opacity: 1; } 80% { stroke-dashoffset: 0; opacity: 1; } 100% { stroke-dashoffset: 0; opacity: 0; } }
+@keyframes heroRing { 0% { transform: scale(0.55); opacity: 0.7; } 100% { transform: scale(1.2); opacity: 0; } }
+.hero-drift { animation: heroDrift 16s ease-in-out infinite; transform-origin: 70% 50%; will-change: transform; }
+.hero-shine { animation: heroShine 7s ease-in-out infinite; will-change: transform; }
+.hero-slide-a { animation: heroSlideA 6s ease-in-out infinite; }
+.hero-slide-b { animation: heroSlideB 7s ease-in-out infinite; }
+.hero-pulse { animation: heroPulse 3.2s ease-in-out infinite; }
+.hero-twinkle, .hero-wiggle, .hero-drip, .hero-ring { transform-box: fill-box; transform-origin: center; }
+.hero-twinkle { animation: heroTwinkle 2.4s ease-in-out infinite; }
+.hero-wiggle { animation: heroWiggle 2.8s ease-in-out infinite; }
+.hero-drip { animation: heroDrip 3s ease-in-out infinite; }
+.hero-draw { stroke-dasharray: 1; animation: heroDraw 6s ease-in-out infinite; }
+.hero-ring { fill: none; animation: heroRing 4s ease-out infinite; }
+
 @media (prefers-reduced-motion: reduce) {
+  .hero-drift, .hero-shine, .hero-slide-a, .hero-slide-b, .hero-pulse, .hero-twinkle, .hero-wiggle, .hero-drip, .hero-draw, .hero-ring { animation: none !important; }
   .pane-enter, .pane-swap, .fade-in, .sheet-up, .sheet-down, .stagger > * { animation: none !important; }
 }

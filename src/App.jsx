@@ -134,6 +134,48 @@ const SUIT_FX = {
   },
 };
 
+const bannerPick = {};
+const BANNER_MASK = { WebkitMaskImage: 'linear-gradient(to right, transparent 0%, #000 55%)', maskImage: 'linear-gradient(to right, transparent 0%, #000 55%)' };
+
+// Banner per kostum. Urutan dicoba: banner-<kostum>.mp4 / .webp / .gif / .jpg, lalu banner.jpg.
+// MP4/GIF/WebP sudah bergerak sendiri; gambar diam digerakkan pelan (zoom + geser).
+function BannerMedia({ suitId }) {
+  const cands = [`/banner-${suitId}.mp4`, `/banner-${suitId}.webp`, `/banner-${suitId}.gif`, `/banner-${suitId}.jpg`, '/banner.jpg'];
+  const [i, setI] = useState(() => bannerPick[suitId] || 0);
+  useEffect(() => { setI(bannerPick[suitId] || 0); }, [suitId]);
+  const next = () => {
+    bannerPick[suitId] = (bannerPick[suitId] || 0) + 1;
+    setI(bannerPick[suitId]);
+  };
+  if (i >= cands.length) return null;
+  const src = cands[i];
+  const box = 'absolute right-0 inset-y-0 w-[68%] overflow-hidden pointer-events-none';
+  if (src.endsWith('.mp4')) {
+    return (
+      <div className={box} style={BANNER_MASK}>
+        <video
+          key={src}
+          src={src}
+          className="w-full h-full object-cover object-center"
+          autoPlay
+          muted
+          loop
+          playsInline
+          preload="auto"
+          ref={(el) => { if (el) { el.muted = true; el.play?.().catch(() => {}); } }}
+          onError={next}
+        />
+      </div>
+    );
+  }
+  const animated = src.endsWith('.gif') || src.endsWith('.webp');
+  return (
+    <div className={box} style={BANNER_MASK}>
+      <img key={src} src={src} alt="" className={`w-full h-full object-cover object-center ${animated ? '' : 'hero-drift'}`} onError={next} />
+    </div>
+  );
+}
+
 function SuitHeroArt({ suitId }) {
   if (suitId === 'miles') {
     return (
@@ -141,11 +183,11 @@ function SuitHeroArt({ suitId }) {
         <defs>
           <pattern id="mdots" width="9" height="9" patternUnits="userSpaceOnUse"><circle cx="2.5" cy="2.5" r="1.6" fill="#67e8f9" /></pattern>
         </defs>
-        <path d="M200 0H290L170 190H80z" fill="#ef4444" opacity="0.9" />
-        <path d="M270 0H350V50L240 190H150z" fill="#06b6d4" opacity="0.85" />
-        <rect x="200" y="120" width="150" height="70" fill="url(#mdots)" opacity="0.7" />
-        <circle cx="318" cy="24" r="4" fill="#fff" /><circle cx="300" cy="44" r="2.5" fill="#fff" /><circle cx="334" cy="52" r="2" fill="#fff" />
-        <g transform="rotate(-6 300 150)"><rect x="236" y="138" width="96" height="26" fill="#fde047" /><text x="284" y="156" textAnchor="middle" fontWeight="800" fontSize="13" fill="#0b0f1a">NEW DROP</text></g>
+        <path className="hero-slide-a" d="M200 0H290L170 190H80z" fill="#ef4444" opacity="0.9" />
+        <path className="hero-slide-b" d="M270 0H350V50L240 190H150z" fill="#06b6d4" opacity="0.85" />
+        <rect className="hero-pulse" x="200" y="120" width="150" height="70" fill="url(#mdots)" opacity="0.7" />
+        <circle className="hero-twinkle" cx="318" cy="24" r="4" fill="#fff" /><circle className="hero-twinkle" style={{ animationDelay: '0.7s' }} cx="300" cy="44" r="2.5" fill="#fff" /><circle className="hero-twinkle" style={{ animationDelay: '1.4s' }} cx="334" cy="52" r="2" fill="#fff" />
+        <g transform="rotate(-6 300 150)"><g className="hero-wiggle"><rect x="236" y="138" width="96" height="26" fill="#fde047" /><text x="284" y="156" textAnchor="middle" fontWeight="800" fontSize="13" fill="#0b0f1a">NEW DROP</text></g></g>
       </svg>
     );
   }
@@ -155,15 +197,15 @@ function SuitHeroArt({ suitId }) {
         <rect width="350" height="14" fill="#05030a" />
         <g fill="#05030a">
           {[[26, 30], [78, 16], [136, 46], [196, 22], [250, 40], [304, 18]].map(([x, h]) => (
-            <g key={x}><rect x={x - 4} y="8" width="8" height={h} rx="4" /><circle cx={x} cy={8 + h + 3} r="5.5" /></g>
+            <g key={x} className="hero-drip" style={{ animationDelay: `${(x % 7) * 0.35}s` }}><rect x={x - 4} y="8" width="8" height={h} rx="4" /><circle cx={x} cy={8 + h + 3} r="5.5" /></g>
           ))}
         </g>
         <g stroke="#e2e8f0" strokeLinecap="round">
-          <path d="M350 190C300 180 290 130 250 126S200 150 170 130" strokeWidth="3" opacity="0.9" />
-          <path d="M250 126C255 100 235 90 220 70" strokeWidth="2" opacity="0.7" />
-          <path d="M300 160C330 140 330 110 350 100" strokeWidth="2.2" opacity="0.8" />
+          <path className="hero-draw" pathLength="1" d="M350 190C300 180 290 130 250 126S200 150 170 130" strokeWidth="3" opacity="0.9" />
+          <path className="hero-draw" style={{ animationDelay: '0.5s' }} pathLength="1" d="M250 126C255 100 235 90 220 70" strokeWidth="2" opacity="0.7" />
+          <path className="hero-draw" style={{ animationDelay: '1s' }} pathLength="1" d="M300 160C330 140 330 110 350 100" strokeWidth="2.2" opacity="0.8" />
         </g>
-        <g stroke="#a855f7" strokeWidth="1" opacity="0.5"><circle cx="330" cy="170" r="30" /><circle cx="330" cy="170" r="60" /><circle cx="330" cy="170" r="90" /></g>
+        <g stroke="#a855f7" strokeWidth="1"><circle className="hero-ring" cx="330" cy="170" r="30" /><circle className="hero-ring" style={{ animationDelay: '1.3s' }} cx="330" cy="170" r="60" /><circle className="hero-ring" style={{ animationDelay: '2.6s' }} cx="330" cy="170" r="90" /></g>
       </svg>
     );
   }
@@ -756,7 +798,8 @@ function HomeView({ songs, currentTrack, isPlaying, suit, onPlay, history = [], 
         <svg className="absolute inset-x-0 bottom-0 w-full h-16 pointer-events-none" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true">
           <path d="M0 60 V38 h14 V26 h10 V38 h8 V16 h12 V38 h10 V30 h14 V38 h12 V20 h10 V38 h16 V28 h12 V38 h10 V12 h14 V38 h12 V32 h10 V38 h16 V22 h12 V38 h14 V30 h10 V38 h12 V18 h12 V38 h14 V60 Z" fill="rgba(0,0,0,0.55)" />
         </svg>
-        <img src="/banner-bg.jpg" alt="" className="absolute right-0 inset-y-0 h-full w-[68%] object-cover object-center pointer-events-none" style={{ WebkitMaskImage: 'linear-gradient(to right, transparent 0%, #000 55%)', maskImage: 'linear-gradient(to right, transparent 0%, #000 55%)' }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+        <BannerMedia suitId={suit.id} />
+        <div aria-hidden="true" className="hero-shine absolute inset-y-0 left-0 w-1/3 pointer-events-none" style={{ background: 'linear-gradient(100deg, transparent 0%, rgba(255,255,255,0.16) 50%, transparent 100%)' }} />
         <div className="relative">
           <h2 className="font-black italic uppercase text-white leading-[0.95] text-[34px] drop-shadow-[0_3px_0_rgba(0,0,0,0.6)]" style={{ transform: 'skewX(-4deg)', textShadow: fx.titleFx }}>
             {greet},<br />Spider-Fan!
@@ -2363,6 +2406,61 @@ export default function MusicPlayer() {
     [userPlaylists, history]
   );
 
+  // ===== Rekomendasi "Untukmu" di tab Cari (saat kolom cari kosong) =====
+  const [recentSearches, setRecentSearches] = useState(() => readSaved('spideyfy-recent-searches', []));
+  const [forYou, setForYou] = useState([]);
+  const [forYouLoading, setForYouLoading] = useState(false);
+  const forYouRef = useRef([]);
+  forYouRef.current = forYou;
+  const forYouAtRef = useRef(0);
+  const searchQueryRef = useRef('');
+  searchQueryRef.current = searchQuery;
+  const noQuery = !searchQuery.trim();
+  const showForYou = noQuery && activeCatalogTab === 'songs' && (forYou.length > 0 || forYouLoading);
+  const songsView = showForYou ? forYou : catalog.songs;
+
+  const rememberSearch = useCallback((q) => {
+    const t = String(q || '').trim();
+    if (t.length < 2) return;
+    setRecentSearches((prev) => {
+      const next = [t, ...prev.filter((x) => String(x).toLowerCase() !== t.toLowerCase())].slice(0, 8);
+      try { localStorage.setItem('spideyfy-recent-searches', JSON.stringify(next)); } catch { /* abaikan */ }
+      return next;
+    });
+  }, []);
+
+  // Ingat pencarian yang benar-benar berujung memutar lagu
+  useEffect(() => {
+    if (currentTrack && searchQueryRef.current.trim().length >= 2) rememberSearch(searchQueryRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTrack?.id]);
+
+  const loadForYou = useCallback(async (force = false) => {
+    if (!force && forYouRef.current.length && Date.now() - forYouAtRef.current < 30000) return;
+    forYouAtRef.current = Date.now();
+    setForYouLoading(true);
+    try {
+      const SUF = ['populer', 'terbaru', 'mix', 'hits', 'lainnya', 'pilihan'];
+      const DISCOVER = ['lagu indonesia terbaru', 'lagu viral', 'top hits', 'lagu santai', 'lagu galau', 'lagu semangat', 'indie indonesia', 'lagu pop terbaik'];
+      const qs = [];
+      recentSearches.slice(0, 2).forEach((q) => qs.push(`${q} ${SUF[Math.floor(Math.random() * SUF.length)]}`));
+      seedQueries(tasteSeeds, 2).forEach((q) => qs.push(q));
+      if (qs.length < 3) shuffle(DISCOVER).slice(0, 3 - qs.length).forEach((q) => qs.push(q));
+      const lists = await Promise.all(qs.slice(0, 4).map((q) => fetchSongs(q).catch(() => null)));
+      const out = shuffle(mergeAlternating(lists, 30));
+      if (out.length) setForYou(out);
+    } catch {
+      /* biarkan daftar lama / bawaan */
+    } finally {
+      setForYouLoading(false);
+    }
+  }, [recentSearches, tasteSeeds]);
+
+  useEffect(() => {
+    if (activeCatalogTab === 'songs' && noQuery) loadForYou(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCatalogTab, noQuery]);
+
   const playUserPlaylist = (pl, startTrack) => {
     if (!pl.tracks.length) return;
     handleSelectTrack(startTrack || pl.tracks[0], true, pl.tracks);
@@ -2474,12 +2572,14 @@ export default function MusicPlayer() {
     setSuggestions([]);
     setShowSuggest(false);
     setActiveCatalogTab('songs');
+    rememberSearch(sg);
     fetchFromYtMusicProxy(sg);
   };
 
   const handleSearchSubmit = (e) => {
     setShowSuggest(false);
     e.preventDefault();
+    rememberSearch(searchQuery);
     fetchFromYtMusicProxy(searchQuery);
   };
 
@@ -2795,7 +2895,16 @@ export default function MusicPlayer() {
                 </div>
 
                 <div className="flex items-center justify-end gap-2 text-[11px] text-neutral-400">
-                  <span className="capitalize font-semibold text-neutral-300 shrink-0">{activeCatalogTab === 'home' ? 'Beranda' : activeCatalogTab === 'settings' ? 'Setelan' : activeCatalogTab}</span>
+                  {showForYou && (
+                    <button
+                      type="button"
+                      onClick={() => loadForYou(true)}
+                      className="flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-white/10 text-white active:scale-95 transition"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${forYouLoading ? 'animate-spin' : ''}`} /> Segarkan
+                    </button>
+                  )}
+                  <span className="capitalize font-semibold text-neutral-300 shrink-0">{activeCatalogTab === 'home' ? 'Beranda' : activeCatalogTab === 'settings' ? 'Setelan' : showForYou ? 'Untukmu' : activeCatalogTab}</span>
                 </div>
               </div>
 
@@ -2843,14 +2952,17 @@ export default function MusicPlayer() {
                   />
                 )}
 
+                {activeCatalogTab === 'songs' && showForYou && forYou.length === 0 && (
+                  <div className="text-center text-xs text-neutral-400 py-10">Menyiapkan rekomendasi untukmu…</div>
+                )}
                 {activeCatalogTab === 'songs' &&
-                  catalog.songs.map((track, idx) => {
+                  songsView.map((track, idx) => {
                     const isSelected = currentTrack?.id === track.id;
                     const isLiked = likedIds.includes(track.id);
                     return (
                       <div
                         key={track.id}
-                        onClick={() => handleSelectTrack(track, true)}
+                        onClick={() => handleSelectTrack(track, true, showForYou ? forYou : null)}
                         className={`flex items-center gap-3 px-3 py-2 rounded-xl border cursor-pointer transition-all duration-200 hover:translate-x-0.5 active:scale-[0.99] ${
                           isSelected
                             ? 'bg-white/12 border-white/25'
