@@ -505,21 +505,76 @@ function wordsOverlap(a, b) {
   return n / Math.max(A.size, B.size);
 }
 
-function lyricsMatch(item, track, cleanTitle, durSec) {
-  if (!item) return false;
+const rawNorm = (x) =>
+  String(x || '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+// Penanda versi lagu (hanya dibaca dari kurung / setelah tanda "-", supaya judul seperti "Live Forever" tidak salah)
+const VERSION_TAGS = ['acoustic', 'live', 'remix', 'sped up', 'speed up', 'slowed', 'reverb', 'nightcore', 'piano', 'unplugged', 'demo', 'extended', '8d', 'lofi', 'lo fi', 'cover'];
+
+function titleExtras(title) {
+  const t = String(title || '');
+  const parts = [];
+  (t.match(/\([^)]*\)|\[[^\]]*\]/g) || []).forEach((m) => parts.push(m));
+  const dash = t.split(/\s[-\u2013\u2014]\s/);
+  if (dash.length > 1) parts.push(dash.slice(1).join(' '));
+  return ` ${rawNorm(parts.join(' '))} `;
+}
+
+function versionTags(title) {
+  const ex = titleExtras(title);
+  return VERSION_TAGS.filter((tag) => ex.includes(` ${tag} `));
+}
+
+// Judul bisa punya embel-embel film / versi: "Sunflower - Spider-Man: Into the Spider-Verse", "Judul (feat. X)"
+function titleVariants(title) {
+  const noParen = String(title || '').replace(/\(.*?\)|\[.*?\]/g, ' ').replace(/\s+/g, ' ').trim();
+  const out = [];
+  const add = (v) => {
+    const t = String(v || '').replace(/\s+(feat\.?|ft\.?|featuring)\s.*$/i, '').replace(/\s+/g, ' ').trim();
+    if (t && !out.includes(t)) out.push(t);
+  };
+  add(noParen);
+  add(noParen.split(/\s[-\u2013\u2014]\s/)[0]);
+  add(noParen.split(/\s\|\s/)[0]);
+  return out;
+}
+
+function firstArtistOf(artist) {
+  return String(artist || '')
+    .split(/,|&|\sx\s|\sfeat\.?\s|\sft\.?\s/i)[0]
+    .trim();
+}
+
+// Skor kecocokan kandidat LRCLIB. -1 = tidak cocok. Makin tinggi makin baik.
+function lyricsScore(item, track, variants, durSec) {
+  if (!item) return -1;
   const t1 = normLyr(item.trackName || item.name);
-  const t2 = normLyr(cleanTitle);
-  if (!t1 || !t2) return false;
-  if (t1 !== t2 && wordsOverlap(t1, t2) < 0.8) return false;
+  if (!t1) return -1;
+  const itemBase = normLyr(String(item.trackName || item.name || '').split(/\s[-\u2013\u2014]\s/)[0]);
+  const titleOk = variants.some((v) => {
+    const t2 = normLyr(v);
+    return t2 && (t1 === t2 || itemBase === t2 || wordsOverlap(t1, t2) >= 0.8);
+  });
+  if (!titleOk) return -1;
   const a1 = normLyr(item.artistName);
   const a2 = normLyr(track.artist);
   if (a1 && a2) {
     const words2 = a2.split(' ');
     const hit = a1.split(' ').some((w) => w.length > 2 && words2.includes(w));
-    if (!hit && !a2.includes(a1) && !a1.includes(a2)) return false;
+    if (!hit && !a2.includes(a1) && !a1.includes(a2)) return -1;
   }
-  if (item.duration && Math.abs(Number(item.duration) - durSec) > 3) return false;
-  return true;
+  const d = item.duration ? Math.abs(Number(item.duration) - durSec) : 2;
+  if (d > 3) return -1;
+  let score = 100 - d * 12;
+  if (item.syncedLyrics) score += 15;
+  const want = versionTags(track.title).join('|');
+  const got = versionTags(item.trackName || item.name).join('|');
+  if (want !== got) score -= 60; // versi lain (mis. acoustic vs studio): boleh dipakai, tapi paling akhir
+  return score;
 }
 
 const INSTRUMENTAL_TITLE = /\b(instrumental|karaoke|inst\.?)\b/i;
@@ -784,6 +839,362 @@ function RecoRow({ songs, seeds, ownedIds, currentTrack, isPlaying, suit, onPlay
   );
 }
 
+// ---------------- RECAP: statistik lagu yang sering diputar ----------------
+const STATS_KEY = 'spideyfy-stats';
+
+function loadStats() {
+  const st = readSaved(STATS_KEY, null);
+  if (st && typeof st === 'object' && st.tracks && typeof st.tracks === 'object') return st;
+  return { since: Date.now(), total: 0, tracks: {} };
+}
+
+// Catat lama & jumlah putar tiap lagu (disimpan di HP). 1 putaran = didengarkan minimal 30 detik.
+function useListeningStats(track, playing) {
+  const statsRef = useRef(null);
+  if (statsRef.current === null) statsRef.current = loadStats();
+  const sessRef = useRef({ id: null, secs: 0 });
+  const trackId = track && track.id;
+  useEffect(() => {
+    if (!playing || !trackId) return undefined;
+    if (sessRef.current.id !== trackId) sessRef.current = { id: trackId, secs: 0 };
+    let last = Date.now();
+    const per = Math.max(60, Number(track.durationSec) || 180);
+    const playsFor = (secs) => (secs < 30 ? 0 : 1 + Math.floor((secs - 30) / per));
+    const tick = () => {
+      const now = Date.now();
+      const dt = Math.min(15, (now - last) / 1000);
+      last = now;
+      if (dt <= 0) return;
+      const st = statsRef.current;
+      const t = st.tracks[trackId] || { id: trackId, plays: 0, secs: 0 };
+      t.videoId = track.videoId;
+      t.title = track.title;
+      t.artist = track.artist;
+      t.album = track.album;
+      t.cover = track.cover;
+      t.durationSec = track.durationSec;
+      t.durationLabel = track.durationLabel;
+      t.secs = (t.secs || 0) + dt;
+      st.total = (st.total || 0) + dt;
+      const before = sessRef.current.secs;
+      sessRef.current.secs += dt;
+      t.plays = (t.plays || 0) + (playsFor(sessRef.current.secs) - playsFor(before));
+      st.tracks[trackId] = t;
+    };
+    const flush = () => {
+      const st = statsRef.current;
+      const ids = Object.keys(st.tracks);
+      if (ids.length > 400) {
+        ids
+          .sort((a, b) => (st.tracks[b].secs || 0) - (st.tracks[a].secs || 0))
+          .slice(300)
+          .forEach((k) => {
+            delete st.tracks[k];
+          });
+      }
+      writeSaved(STATS_KEY, st);
+    };
+    const iv = setInterval(tick, 1000);
+    const fl = setInterval(flush, 10000);
+    return () => {
+      tick();
+      flush();
+      clearInterval(iv);
+      clearInterval(fl);
+    };
+  }, [playing, trackId]);
+}
+
+function recapList(stats) {
+  return Object.values((stats && stats.tracks) || {})
+    .filter((t) => t && t.title && (t.plays > 0 || t.secs >= 45))
+    .map((t) => ({ ...t, plays: Math.max(1, t.plays || 0) }))
+    .sort((a, b) => b.plays - a.plays || (b.secs || 0) - (a.secs || 0));
+}
+
+function recapArtists(list) {
+  const m = {};
+  list.forEach((t) => {
+    const name = firstArtistOf(t.artist) || 'Tidak diketahui';
+    const x = m[name] || (m[name] = { name, plays: 0, secs: 0, cover: t.cover, videoId: t.videoId, id: t.id });
+    x.plays += t.plays;
+    x.secs += t.secs || 0;
+  });
+  return Object.values(m).sort((a, b) => b.plays - a.plays || b.secs - a.secs);
+}
+
+function useCountUp(target, run, ms = 1100) {
+  const [v, setV] = useState(0);
+  useEffect(() => {
+    if (!run) {
+      setV(0);
+      return undefined;
+    }
+    let raf;
+    let t0 = 0;
+    const step = (t) => {
+      if (!t0) t0 = t;
+      const p = Math.min(1, (t - t0) / ms);
+      setV(Math.round(target * (1 - Math.pow(1 - p, 3))));
+      if (p < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [target, run, ms]);
+  return v;
+}
+
+const RECAP_CSS = `
+@keyframes rcRise{from{opacity:0;transform:translate3d(0,22px,0)}to{opacity:1;transform:none}}
+@keyframes rcPop{0%{opacity:0;transform:scale(.55) rotate(-6deg)}60%{opacity:1;transform:scale(1.07) rotate(1deg)}100%{opacity:1;transform:none}}
+@keyframes rcBar{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes rcSpin{to{transform:rotate(360deg)}}
+@keyframes rcEq{0%,100%{transform:scaleY(.22)}50%{transform:scaleY(1)}}
+@keyframes rcFloat{0%,100%{transform:translate3d(0,0,0)}50%{transform:translate3d(0,-12px,0)}}
+@keyframes rcRing{0%{transform:scale(.55);opacity:.7}100%{transform:scale(1.5);opacity:0}}
+@keyframes rcFade{from{opacity:0}to{opacity:1}}
+`;
+
+function RecapBars({ color, n = 5, h = 28 }) {
+  return (
+    <div className="flex items-end gap-1" style={{ height: h }}>
+      {Array.from({ length: n }).map((_, i) => (
+        <span
+          key={i}
+          style={{
+            width: 4,
+            height: '100%',
+            borderRadius: 2,
+            background: color,
+            transformOrigin: 'bottom',
+            animation: `rcEq ${0.7 + (i % 3) * 0.22}s ${i * 0.11}s infinite ease-in-out`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+const RECAP_SLIDE_MS = 5200;
+
+function RecapModal({ stats, suit, onClose, onPlay }) {
+  const list = useMemo(() => recapList(stats), [stats]);
+  const artists = useMemo(() => recapArtists(list), [list]);
+  const minutes = Math.round((stats.total || 0) / 60);
+  const top = list[0];
+  const slides = list.length ? 4 : 1;
+  const [slide, setSlide] = useState(0);
+  const minCount = useCountUp(minutes, slide === 0);
+  const playCount = useCountUp(top ? top.plays : 0, slide === 1, 1300);
+
+  useEffect(() => {
+    if (slide >= slides - 1) return undefined;
+    const t = setTimeout(() => setSlide((x) => Math.min(slides - 1, x + 1)), RECAP_SLIDE_MS);
+    return () => clearTimeout(t);
+  }, [slide, slides]);
+
+  const go = (d) => setSlide((x) => Math.max(0, Math.min(slides - 1, x + d)));
+  const top5 = list.slice(0, 5);
+  const maxPlays = top5.length ? top5[0].plays : 1;
+  const topArtist = artists[0];
+
+  return createPortal(
+    <div
+      className="fixed inset-0 flex flex-col text-white overflow-hidden"
+      style={{ zIndex: 300, background: '#07070d', animation: 'rcFade .25s both', paddingTop: 'env(safe-area-inset-top, 0px)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+    >
+      <style>{RECAP_CSS}</style>
+      <div aria-hidden="true" className="absolute -top-24 -left-20 w-72 h-72 rounded-full blur-3xl opacity-50" style={{ background: suit.primary, animation: 'rcFloat 6s infinite ease-in-out' }} />
+      <div aria-hidden="true" className="absolute -bottom-24 -right-20 w-80 h-80 rounded-full blur-3xl opacity-40" style={{ background: suit.secondary, animation: 'rcFloat 7.5s infinite ease-in-out' }} />
+
+      <div className="relative flex gap-1.5 px-4 pt-3 shrink-0">
+        {Array.from({ length: slides }).map((_, i) => (
+          <div key={i} className="h-1 flex-1 rounded-full bg-white/20 overflow-hidden">
+            <div
+              key={`${i}-${slide}`}
+              className="h-full rounded-full bg-white"
+              style={{
+                transformOrigin: 'left',
+                transform: i < slide ? 'scaleX(1)' : 'scaleX(0)',
+                animation: i === slide && slide < slides - 1 ? `rcBar ${RECAP_SLIDE_MS}ms linear forwards` : undefined,
+                ...(i === slide && slide === slides - 1 ? { transform: 'scaleX(1)' } : null),
+              }}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="relative flex items-center justify-between px-4 pt-3 shrink-0">
+        <div className="text-[11px] font-black uppercase tracking-[0.25em]" style={{ color: suit.secondary }}>SpideyFy Recap</div>
+        <button type="button" onClick={onClose} aria-label="Tutup recap" className="p-2 rounded-full bg-white/10 active:scale-90 transition">
+          <X className="w-5 h-5" />
+        </button>
+      </div>
+
+      <div className="relative flex-1 min-h-0 flex flex-col items-center justify-center px-6 text-center" key={slide}>
+        {list.length === 0 && (
+          <div style={{ animation: 'rcRise .6s both' }}>
+            <div className="mx-auto mb-5 w-24 h-24 rounded-full flex items-center justify-center" style={{ background: `${suit.primary}33`, border: `2px solid ${suit.primary}` }}>
+              <Headphones className="w-10 h-10" />
+            </div>
+            <div className="text-xl font-black">Recap-mu masih kosong</div>
+            <p className="text-sm text-neutral-300 mt-2">Putar beberapa lagu dulu. Setelah itu lagu yang paling sering kamu dengar akan muncul di sini.</p>
+          </div>
+        )}
+
+        {list.length > 0 && slide === 0 && (
+          <div className="flex flex-col items-center">
+            <div className="relative w-44 h-44 flex items-center justify-center mb-6">
+              {[0, 1, 2].map((i) => (
+                <span key={i} className="absolute inset-0 rounded-full" style={{ border: `2px solid ${suit.primary}`, animation: `rcRing 2.6s ${i * 0.85}s infinite ease-out` }} />
+              ))}
+              <RecapBars color={suit.primary} n={7} h={64} />
+            </div>
+            <div className="text-xs font-black tracking-[0.3em] uppercase" style={{ color: suit.secondary, animation: 'rcRise .6s both' }}>Recap kamu</div>
+            <div className="text-7xl font-black mt-2 tabular-nums" style={{ animation: 'rcPop .8s .15s both' }}>{minCount}</div>
+            <div className="text-lg font-bold" style={{ animation: 'rcRise .6s .45s both' }}>menit mendengarkan</div>
+            <div className="text-sm text-neutral-300 mt-3" style={{ animation: 'rcRise .6s .7s both' }}>dari {list.length} lagu berbeda</div>
+          </div>
+        )}
+
+        {list.length > 0 && slide === 1 && top && (
+          <div className="flex flex-col items-center w-full">
+            <div className="text-xs font-black tracking-[0.3em] uppercase mb-4" style={{ color: suit.secondary, animation: 'rcRise .5s both' }}>Lagu favoritmu</div>
+            <div className="relative w-56 h-56 mb-5" style={{ animation: 'rcPop .9s .1s both' }}>
+              <div className="absolute inset-0 rounded-full" style={{ boxShadow: `0 0 50px ${suit.glow}`, animation: 'rcSpin 14s linear infinite' }}>
+                <CoverImg src={top.cover} videoId={top.videoId || top.id} alt={top.title} className="w-full h-full rounded-full object-cover" style={{ border: `4px solid ${suit.primary}` }} />
+              </div>
+              <div className="absolute left-1/2 top-1/2 w-8 h-8 -ml-4 -mt-4 rounded-full" style={{ background: '#07070d', border: '3px solid rgba(255,255,255,0.35)' }} />
+              <div className="absolute -top-2 -right-2 w-14 h-14 flex items-center justify-center font-black text-lg -rotate-12" style={{ background: suit.primary, clipPath: BURST }}>#1</div>
+            </div>
+            <div className="text-2xl font-black leading-tight line-clamp-2 max-w-full" style={{ animation: 'rcRise .6s .4s both' }}>{top.title}</div>
+            <div className="text-sm text-neutral-300 mt-1 truncate max-w-full" style={{ animation: 'rcRise .6s .55s both' }}>{top.artist}</div>
+            <div className="mt-4 flex items-baseline gap-2" style={{ animation: 'rcRise .6s .7s both' }}>
+              <span className="text-5xl font-black tabular-nums" style={{ color: suit.primary }}>{playCount}</span>
+              <span className="text-base font-bold">kali diputar</span>
+            </div>
+            <div className="text-xs text-neutral-400 mt-1" style={{ animation: 'rcRise .6s .85s both' }}>{Math.max(1, Math.round((top.secs || 0) / 60))} menit kamu habiskan bareng lagu ini</div>
+          </div>
+        )}
+
+        {list.length > 0 && slide === 2 && (
+          <div className="w-full max-w-sm">
+            <div className="text-xs font-black tracking-[0.3em] uppercase mb-4" style={{ color: suit.secondary, animation: 'rcRise .5s both' }}>Top {top5.length} lagu</div>
+            <div className="space-y-3 text-left">
+              {top5.map((t, i) => (
+                <div key={t.id} style={{ animation: `rcRise .5s ${0.1 + i * 0.14}s both` }}>
+                  <div className="flex items-center gap-3">
+                    <span className="w-5 text-center text-lg font-black" style={{ color: i === 0 ? suit.primary : 'rgba(255,255,255,0.6)' }}>{i + 1}</span>
+                    <CoverImg src={t.cover} videoId={t.videoId || t.id} alt={t.title} className="w-11 h-11 rounded-lg object-cover shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-bold truncate">{t.title}</div>
+                      <div className="text-[11px] text-neutral-400 truncate">{t.artist}</div>
+                    </div>
+                    <span className="text-xs font-black tabular-nums shrink-0">{t.plays}x</span>
+                  </div>
+                  <div className="mt-1.5 ml-8 h-1.5 rounded-full bg-white/10 overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${Math.max(8, (t.plays / maxPlays) * 100)}%`, background: i === 0 ? suit.primary : suit.secondary, transformOrigin: 'left', animation: `rcBar .9s ${0.35 + i * 0.14}s cubic-bezier(.2,.8,.2,1) both` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {list.length > 0 && slide === 3 && topArtist && (
+          <div className="flex flex-col items-center w-full max-w-sm">
+            <div className="text-xs font-black tracking-[0.3em] uppercase mb-4" style={{ color: suit.secondary, animation: 'rcRise .5s both' }}>Artis teratas</div>
+            <CoverImg src={topArtist.cover} videoId={topArtist.videoId || topArtist.id} alt={topArtist.name} className="w-32 h-32 rounded-full object-cover" style={{ border: `4px solid ${suit.primary}`, boxShadow: `0 0 40px ${suit.glow}`, animation: 'rcPop .8s .1s both' }} />
+            <div className="text-3xl font-black mt-4 leading-tight line-clamp-2" style={{ animation: 'rcRise .6s .4s both' }}>{topArtist.name}</div>
+            <div className="text-sm text-neutral-300 mt-1" style={{ animation: 'rcRise .6s .55s both' }}>{topArtist.plays} kali diputar · {Math.max(1, Math.round(topArtist.secs / 60))} menit</div>
+            {artists.length > 1 && (
+              <div className="mt-5 w-full space-y-1.5 text-left">
+                {artists.slice(1, 4).map((a, i) => (
+                  <div key={a.name} className="flex items-center justify-between rounded-xl bg-white/[0.07] px-3 py-2" style={{ animation: `rcRise .5s ${0.7 + i * 0.12}s both` }}>
+                    <span className="text-sm font-bold truncate">{i + 2}. {a.name}</span>
+                    <span className="text-xs text-neutral-300 shrink-0 ml-2">{a.plays}x</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="mt-6 flex gap-2 w-full" style={{ animation: 'rcRise .6s 1.1s both' }}>
+              <button type="button" onClick={() => { onClose(); if (top) onPlay(top); }} className="flex-1 rounded-full py-3 text-sm font-black active:scale-95 transition" style={{ background: suit.primary }}>
+                Putar lagu #1
+              </button>
+              <button type="button" onClick={onClose} className="flex-1 rounded-full py-3 text-sm font-black bg-white/10 active:scale-95 transition">Selesai</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {list.length > 0 && (
+        <>
+          <button type="button" aria-label="Sebelumnya" onClick={() => go(-1)} className="absolute left-0 top-28 bottom-28 w-1/4" style={{ background: 'transparent' }} />
+          <button type="button" aria-label="Berikutnya" onClick={() => go(1)} className="absolute right-0 top-28 bottom-28 w-1/4" style={{ background: 'transparent' }} />
+        </>
+      )}
+    </div>,
+    document.body
+  );
+}
+
+function RecapCard({ suit, onPlay }) {
+  const [stats, setStats] = useState(() => loadStats());
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const iv = setInterval(() => setStats(loadStats()), 15000);
+    return () => clearInterval(iv);
+  }, []);
+  const list = recapList(stats);
+  const top3 = list.slice(0, 3);
+  const openRecap = () => {
+    setStats(loadStats());
+    setOpen(true);
+  };
+  return (
+    <>
+      <style>{RECAP_CSS}</style>
+      <button
+        type="button"
+        onClick={openRecap}
+        className="w-full text-left relative overflow-hidden rounded-2xl p-3 active:scale-[0.99] transition"
+        style={{ border: `1px solid ${suit.primary}88`, background: `linear-gradient(120deg, ${suit.orbA} 0%, rgba(8,8,16,0.92) 70%)`, boxShadow: `0 0 18px ${suit.glow}` }}
+      >
+        {top3.length === 0 ? (
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style={{ background: `${suit.primary}33` }}>
+              <Sparkles className="w-5 h-5 text-white" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[10px] font-black uppercase tracking-widest" style={{ color: suit.primary }}>Recap kamu</div>
+              <div className="text-xs text-neutral-300">Putar beberapa lagu, nanti lagu favoritmu muncul di sini.</div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-white/70 shrink-0" />
+          </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            <div className="flex shrink-0">
+              {top3.map((t, i) => (
+                <div key={t.id} className="relative" style={{ marginLeft: i === 0 ? 0 : -14, zIndex: 3 - i }}>
+                  <CoverImg src={t.cover} videoId={t.videoId || t.id} alt={t.title} className="w-12 h-12 rounded-xl object-cover" style={{ border: '2px solid #0b0b10' }} />
+                  <span className="absolute -top-1 -left-1 w-4 h-4 rounded-full text-[9px] font-black flex items-center justify-center text-white" style={{ background: suit.primary }}>{i + 1}</span>
+                </div>
+              ))}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[10px] font-black uppercase tracking-widest" style={{ color: suit.primary }}>Recap kamu</div>
+              <div className="text-sm font-black text-white truncate">{top3[0].title}</div>
+              <div className="text-[11px] text-neutral-300 truncate">Paling sering diputar · {top3[0].plays}x</div>
+            </div>
+            <RecapBars color={suit.primary} n={4} h={24} />
+            <ChevronRight className="w-4 h-4 text-white/70 shrink-0" />
+          </div>
+        )}
+      </button>
+      {open && <RecapModal stats={stats} suit={suit} onClose={() => setOpen(false)} onPlay={onPlay} />}
+    </>
+  );
+}
+
 function HomeView({ songs, currentTrack, isPlaying, suit, onPlay, history = [], seeds = [], ownedIds = new Set() }) {
   const h = new Date().getHours();
   const greet = h < 11 ? 'Selamat pagi' : h < 15 ? 'Selamat siang' : h < 18 ? 'Selamat sore' : 'Selamat malam';
@@ -823,6 +1234,8 @@ function HomeView({ songs, currentTrack, isPlaying, suit, onPlay, history = [], 
           </button>
         ))}
       </div>
+
+      <RecapCard suit={suit} onPlay={onPlay} />
 
       <div>
         <h3 className="text-sm font-black italic text-white mb-2 flex items-center gap-1.5"><SpiderIcon size={14} color={suit.primary} /> Lanjutkan</h3>
@@ -942,7 +1355,7 @@ function askBackgroundPermission() {
   return true;
 }
 
-const BACKUP_KEYS = ['spideyfy-playlists', 'spideyfy-prefs', 'spideyfy-history'];
+const BACKUP_KEYS = ['spideyfy-playlists', 'spideyfy-prefs', 'spideyfy-history', 'spideyfy-stats', 'spideyfy-lyr-offset'];
 
 function BackupSection({ suit }) {
   const [text, setText] = useState('');
@@ -1316,6 +1729,7 @@ export default function MusicPlayer() {
   const [lyrics, setLyrics] = useState(FALLBACK_CATALOG.songs[0].lyrics);
   const [lyricsSource, setLyricsSource] = useState('Synced Lyrics');
   const [lyricsSynced, setLyricsSynced] = useState(true);
+  const [lyricOffset, setLyricOffset] = useState(0);
   const lyricsReqRef = useRef(0);
   const [activeLineIndex, setActiveLineIndex] = useState(-1);
   const [suggestions, setSuggestions] = useState([]);
@@ -1596,6 +2010,9 @@ export default function MusicPlayer() {
     }
   }, [volume, isMuted]);
 
+  // Catat statistik putar untuk fitur Recap
+  useListeningStats(currentTrack, isPlaying);
+
   // Playback progress & YouTube time sync interval
   useEffect(() => {
     if (!isPlaying) return;
@@ -1613,6 +2030,19 @@ export default function MusicPlayer() {
     }, 250);
     return () => clearInterval(interval);
   }, [isPlaying, playbackMode, duration]);
+
+  // Geser sinkron lirik lagu ini (disimpan per lagu)
+  const adjustLyricOffset = (delta) => {
+    const id = currentTrack && currentTrack.id;
+    if (!id) return;
+    const map = readSaved('spideyfy-lyr-offset', {}) || {};
+    const next = Math.round(((Number(map[id]) || 0) + delta) * 10) / 10;
+    if (next === 0) delete map[id];
+    else map[id] = next;
+    writeSaved('spideyfy-lyr-offset', map);
+    setLyricOffset(next);
+    setLyrics((prev) => prev.map((l) => ({ ...l, time: Math.max(0, (Number(l.time) || 0) + delta) })));
+  };
 
   // Compute active lyric line index based on currentTime
   useEffect(() => {
@@ -1657,6 +2087,7 @@ export default function MusicPlayer() {
 
     setLyrics([]);
     setLyricsSynced(true);
+    setLyricOffset(0);
 
     // Judul menyebut instrumental/karaoke -> tidak ada lirik
     if (INSTRUMENTAL_TITLE.test(String(track.title || ''))) {
@@ -1666,47 +2097,59 @@ export default function MusicPlayer() {
 
     setLyricsSource('Searching LRCLIB...');
     try {
-      const cleanTitle = String(track.title || '').replace(/\(.*?\)|\[.*?\]/g, '').trim();
-      const firstArtist = String(track.artist || '').split(',')[0].trim();
+      const variants = titleVariants(track.title);
+      const firstArtist = firstArtistOf(track.artist);
       const durSec = Number(track.durationSec) || 0;
-      if (cleanTitle && durSec > 0 && durSec <= 600) {
+      if (variants.length && durSec > 0 && durSec <= 900) {
         const base = 'https://lrclib.net/api';
-        let list = [];
-        try {
-          const r1 = await fetch(
-            `${base}/get?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(firstArtist)}&duration=${Math.round(durSec)}`
-          );
-          if (r1.ok) {
-            const j = await r1.json();
-            if (j && typeof j === 'object' && !Array.isArray(j)) list.push(j);
+        const getJson = async (url) => {
+          const ctl = new AbortController();
+          const to = setTimeout(() => ctl.abort(), 8000);
+          try {
+            const r = await fetch(url, { signal: ctl.signal });
+            return r.ok ? await r.json() : null;
+          } catch {
+            return null;
+          } finally {
+            clearTimeout(to);
           }
-        } catch {
-          // lanjut ke pencarian
-        }
-        try {
-          const r2 = await fetch(
-            `${base}/search?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(firstArtist)}`
-          );
-          if (r2.ok) {
-            const raw = await r2.json();
-            if (Array.isArray(raw)) list = list.concat(raw);
-          }
-        } catch {
-          // abaikan
-        }
+        };
+        const urls = [];
+        variants.slice(0, 2).forEach((v) => {
+          urls.push(`${base}/get?track_name=${encodeURIComponent(v)}&artist_name=${encodeURIComponent(firstArtist)}&duration=${Math.round(durSec)}`);
+          urls.push(`${base}/search?track_name=${encodeURIComponent(v)}&artist_name=${encodeURIComponent(firstArtist)}`);
+        });
+        urls.push(`${base}/search?q=${encodeURIComponent(`${variants[variants.length - 1]} ${firstArtist}`)}`);
+        const results = await Promise.all(urls.map(getJson));
         if (isStale()) return;
 
-        const valid = list.filter((i) => lyricsMatch(i, track, cleanTitle, durSec));
-        const byDur = (a, b) =>
-          Math.abs((Number(a.duration) || durSec) - durSec) - Math.abs((Number(b.duration) || durSec) - durSec);
-        valid.sort(byDur);
+        const seen = new Set();
+        const scored = [];
+        results.forEach((raw) => {
+          const arr = Array.isArray(raw) ? raw : raw && typeof raw === 'object' ? [raw] : [];
+          arr.forEach((it) => {
+            if (!it) return;
+            const key = it.id != null ? it.id : `${it.trackName}-${it.duration}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            const sc = lyricsScore(it, track, variants, durSec);
+            if (sc >= 0) scored.push({ it, sc });
+          });
+        });
+        scored.sort((x, y) => y.sc - x.sc);
+        const valid = scored.map((x) => x.it);
+        const wantTags = versionTags(track.title).join('|');
+        const otherVersion = (it) => versionTags(it.trackName || it.name).join('|') !== wantTags;
+        const savedOff = Number((readSaved('spideyfy-lyr-offset', {}) || {})[track.id]) || 0;
+
         const syncedItem = valid.find((i) => i.syncedLyrics && !i.instrumental);
         if (syncedItem) {
-          const parsed = parseLrcText(syncedItem.syncedLyrics);
+          const parsed = parseLrcText(syncedItem.syncedLyrics).map((l) => ({ ...l, time: Math.max(0, l.time + savedOff) }));
           if (parsed.length) {
             setLyrics(parsed);
             setLyricsSynced(true);
-            setLyricsSource('LRCLIB Synced');
+            setLyricOffset(savedOff);
+            setLyricsSource(otherVersion(syncedItem) ? 'LRCLIB (versi lain, bisa kurang pas)' : 'LRCLIB Synced');
             return;
           }
         }
@@ -3646,6 +4089,16 @@ export default function MusicPlayer() {
               <Minimize2 className="w-5 h-5" />
             </button>
           </div>
+
+          {lyricsSynced && lyrics.length > 0 && (
+            <div className="flex items-center justify-center gap-2 px-4 pb-1 shrink-0 text-[11px] text-neutral-300">
+              <span>Sinkron</span>
+              <button type="button" onClick={() => adjustLyricOffset(-0.5)} className="px-3 py-1.5 rounded-full bg-white/10 font-bold text-white active:scale-90 transition">{'\u2212'}0.5s</button>
+              <span className="min-w-[48px] text-center font-bold text-white">{lyricOffset > 0 ? '+' : ''}{lyricOffset.toFixed(1)}s</span>
+              <button type="button" onClick={() => adjustLyricOffset(0.5)} className="px-3 py-1.5 rounded-full bg-white/10 font-bold text-white active:scale-90 transition">+0.5s</button>
+              <span className="text-neutral-500">{'\u2212'} lebih cepat, + lebih lambat</span>
+            </div>
+          )}
 
           <div
             ref={fullLyricsRef}
