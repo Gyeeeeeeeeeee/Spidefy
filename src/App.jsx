@@ -35,6 +35,7 @@ import {
   Repeat,
   Repeat1,
   Shuffle,
+  Moon,
 } from 'lucide-react';
 import { PlaylistLibrary, PlaylistDetail } from './PlaylistsView.jsx';
 import CoverImg from './CoverImg.jsx';
@@ -748,7 +749,7 @@ function HomeView({ songs, currentTrack, isPlaying, suit, onPlay, history = [], 
   const outline = { WebkitTextStroke: `1px ${suit.primary}`, color: 'transparent' };
   const fx = SUIT_FX[suit.id] || SUIT_FX.classic;
   return (
-    <div className="space-y-5 pb-4">
+    <div className="stagger space-y-5 pb-4">
       <div className="relative overflow-hidden rounded-3xl p-5 min-h-[190px] flex flex-col justify-center" style={{ border: `1px solid ${suit.primary}88`, boxShadow: `0 0 24px ${suit.glow}, inset 0 0 40px rgba(0,0,0,0.5)`, background: fx.heroBg || `linear-gradient(120deg, ${suit.orbA} 0%, rgba(8,8,16,0.95) 60%, ${suit.orbB} 100%)` }}>
         <SuitHeroArt suitId={suit.id} />
         <WebCorner color={suit.secondary} />
@@ -955,9 +956,10 @@ function BackupSection({ suit }) {
   );
 }
 
-function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, backendConnected, islandOn, setIslandOn, islandLyrics, setIslandLyrics, notifLyrics, setNotifLyrics, islandTheme, setIslandTheme, lockLyrics, setLockLyrics }) {
+function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, backendConnected, islandOn, setIslandOn, islandLyrics, setIslandLyrics, notifLyrics, setNotifLyrics, islandTheme, setIslandTheme, lockLyrics, setLockLyrics, sleepLeft = 0, sleepEot = false, onSleepStart, onSleepEot, onSleepAdd, onSleepCancel }) {
+  const [sleepCustom, setSleepCustom] = useState('');
   return (
-    <div className="space-y-4 pb-4">
+    <div className="stagger space-y-4 pb-4">
       <div>
         <h3 className="text-sm font-black italic text-white mb-2">Kostum</h3>
         <div className="grid grid-cols-3 gap-2">
@@ -978,6 +980,64 @@ function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, 
             </button>
           ))}
         </div>
+      </div>
+      <div>
+        <h3 className="text-sm font-black italic text-white mb-2 flex items-center gap-1.5">
+          <Moon className="w-4 h-4" style={{ color: suit.primary }} /> Sleep Timer
+        </h3>
+        {sleepLeft > 0 || sleepEot ? (
+          <div className="fade-in rounded-xl bg-white/[0.05] p-3">
+            <div className="text-[11px] text-neutral-400">Musik berhenti otomatis</div>
+            <div className="text-2xl font-black text-white tabular-nums mt-0.5">
+              {sleepEot ? 'Setelah lagu ini' : fmtSleep(sleepLeft)}
+            </div>
+            <div className="flex gap-2 mt-2.5">
+              {!sleepEot && (
+                <button type="button" onClick={() => onSleepAdd(10)} className="flex-1 rounded-xl py-2 text-xs font-bold text-white bg-white/10 active:scale-95 transition">
+                  +10 menit
+                </button>
+              )}
+              <button type="button" onClick={onSleepCancel} className="flex-1 rounded-xl py-2 text-xs font-bold text-white active:scale-95 transition" style={{ background: suit.primary }}>
+                Batalkan
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <div className="grid grid-cols-3 gap-2">
+              {[15, 30, 45, 60, 90].map((m) => (
+                <button key={m} type="button" onClick={() => onSleepStart(m)} className="rounded-xl py-2.5 text-xs font-bold text-white bg-white/[0.06] border border-transparent active:scale-95 transition">
+                  {m} menit
+                </button>
+              ))}
+              <button type="button" onClick={onSleepEot} className="rounded-xl py-2.5 text-xs font-bold text-white bg-white/[0.06] border border-transparent active:scale-95 transition">
+                Akhir lagu
+              </button>
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="number"
+                inputMode="numeric"
+                min="1"
+                max="600"
+                value={sleepCustom}
+                onChange={(e) => setSleepCustom(e.target.value)}
+                placeholder="Menit kustom (1-600)"
+                aria-label="Durasi sleep timer dalam menit"
+                className="min-w-0 flex-1 rounded-xl bg-white/[0.06] px-3 py-2 text-xs text-white placeholder-neutral-500 outline-none border border-white/10 focus:border-white/30 transition"
+              />
+              <button
+                type="button"
+                disabled={!(Number(sleepCustom) > 0)}
+                onClick={() => { onSleepStart(sleepCustom); setSleepCustom(''); }}
+                className="px-4 rounded-xl text-xs font-bold text-white active:scale-95 transition disabled:opacity-40"
+                style={{ background: suit.primary }}
+              >
+                Mulai
+              </button>
+            </div>
+          </div>
+        )}
       </div>
       <div>
         <h3 className="text-sm font-black italic text-white mb-2">Dynamic Island</h3>
@@ -1065,6 +1125,22 @@ function SettingsView({ suit, suitId, setSuitId, playbackMode, setPlaybackMode, 
   );
 }
 
+function fmtSleep(sec) {
+  const p = (n) => String(n).padStart(2, '0');
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  return h > 0 ? `${h}:${p(m)}:${p(s)}` : `${p(m)}:${p(s)}`;
+}
+
+const MOBILE_TABS = [
+  { id: 'home', label: 'Beranda', icon: Home },
+  { id: 'songs', label: 'Cari', icon: Search },
+  { id: 'playlists', label: 'Playlist', icon: ListMusic },
+  { id: 'lyrics', label: 'Lirik', icon: Mic2 },
+  { id: 'settings', label: 'Setelan', icon: Settings },
+];
+
 export default function MusicPlayer() {
   // Suit & macOS window state
   const [suitId, setSuitId] = useState(SAVED_PREFS.suit || 'classic');
@@ -1092,6 +1168,15 @@ export default function MusicPlayer() {
   const shuffleBagRef = useRef([]);
   const shuffleHistoryRef = useRef([]);
   const [fullLyrics, setFullLyrics] = useState(false);
+  const [lyricsClosing, setLyricsClosing] = useState(false);
+  const closeFullLyrics = () => {
+    if (lyricsClosing) return;
+    setLyricsClosing(true);
+    setTimeout(() => {
+      setFullLyrics(false);
+      setLyricsClosing(false);
+    }, 320);
+  };
   const fullLyricsRef = useRef(null);
   const scrubbingRef = useRef(false);
   const repeatRef = useRef('all');
@@ -1782,6 +1867,78 @@ export default function MusicPlayer() {
     setIsPlaying(next);
   }, []);
 
+  // ===== Sleep Timer =====
+  const [sleepAt, setSleepAt] = useState(null); // waktu berhenti (epoch ms)
+  const [sleepLeft, setSleepLeft] = useState(0); // sisa detik untuk tampilan
+  const [sleepEot, setSleepEot] = useState(false); // berhenti setelah lagu ini selesai
+  const sleepEotRef = useRef(false);
+  const isMutedRef = useRef(false);
+  isMutedRef.current = isMuted;
+
+  const restorePlayerVolume = useCallback(() => {
+    const pl = ytPlayerRef.current;
+    if (pl && typeof pl.setVolume === 'function') pl.setVolume(isMutedRef.current ? 0 : volumeRef.current);
+  }, []);
+
+  const stopPlaybackForSleep = useCallback(() => {
+    const pl = ytPlayerRef.current;
+    isPlayingRef.current = false;
+    if (pl && typeof pl.pauseVideo === 'function') pl.pauseVideo();
+    restorePlayerVolume();
+    setIsPlaying(false);
+  }, [restorePlayerVolume]);
+
+  useEffect(() => {
+    if (!sleepAt) {
+      setSleepLeft(0);
+      return undefined;
+    }
+    const FADE_MS = 8000; // volume turun halus di 8 detik terakhir
+    const tick = () => {
+      const left = sleepAt - Date.now();
+      if (left <= 0) {
+        stopPlaybackForSleep();
+        setSleepAt(null);
+        setSleepLeft(0);
+        navigator.vibrate?.(30);
+        return;
+      }
+      setSleepLeft(Math.ceil(left / 1000));
+      if (left <= FADE_MS) {
+        const pl = ytPlayerRef.current;
+        if (pl && typeof pl.setVolume === 'function' && !isMutedRef.current) {
+          pl.setVolume(Math.max(0, Math.round(volumeRef.current * (left / FADE_MS))));
+        }
+      }
+    };
+    tick();
+    const iv = setInterval(tick, 500);
+    return () => clearInterval(iv);
+  }, [sleepAt, stopPlaybackForSleep]);
+
+  const startSleep = (minutes) => {
+    const m = Math.max(1, Math.min(600, Math.round(Number(minutes) || 0)));
+    sleepEotRef.current = false;
+    setSleepEot(false);
+    restorePlayerVolume();
+    setSleepAt(Date.now() + m * 60000);
+    navigator.vibrate?.(15);
+  };
+  const startSleepEot = () => {
+    setSleepAt(null);
+    sleepEotRef.current = true;
+    setSleepEot(true);
+    navigator.vibrate?.(15);
+  };
+  const addSleep = (minutes) => setSleepAt((a) => (a ? a + minutes * 60000 : a));
+  const cancelSleep = () => {
+    sleepEotRef.current = false;
+    setSleepEot(false);
+    setSleepAt(null);
+    setSleepLeft(0);
+    restorePlayerVolume();
+  };
+
   const handleStepTrack = useCallback(
     (delta) => {
       const list = queueRef.current && queueRef.current.length ? queueRef.current : catalog.songs;
@@ -1824,6 +1981,15 @@ export default function MusicPlayer() {
   // Dipanggil saat lagu selesai (atau gagal dimuat)
   const handleTrackEnded = useCallback(
     (fromError) => {
+      if (!fromError && sleepEotRef.current) {
+        sleepEotRef.current = false;
+        setSleepEot(false);
+        const plStop = ytPlayerRef.current;
+        isPlayingRef.current = false;
+        if (plStop && typeof plStop.pauseVideo === 'function') plStop.pauseVideo();
+        setIsPlaying(false);
+        return;
+      }
       const mode = repeatRef.current;
       const pl = ytPlayerRef.current;
       if (!fromError && mode === 'one') {
@@ -2336,7 +2502,7 @@ export default function MusicPlayer() {
 
   const windowClass = useMemo(() => {
     const base =
-      'w-full h-full flex flex-col overflow-hidden max-lg:rounded-none! max-lg:border-0! border border-white/15 bg-[#121218]/80 backdrop-blur-2xl shadow-[0_30px_90px_rgba(0,0,0,0.82)] transition-all duration-500';
+      'w-full h-full flex flex-col overflow-hidden max-lg:rounded-none! max-lg:border-0! border border-white/15 bg-[#121218]/80 lg:backdrop-blur-2xl shadow-[0_30px_90px_rgba(0,0,0,0.82)] transition-all duration-500';
     if (windowMode === 'fullscreen') {
       return `${base} max-w-none max-h-none rounded-xl`;
     }
@@ -2542,7 +2708,7 @@ export default function MusicPlayer() {
             {/* Center Pane: Search + Structured Songs / Albums / Artists / Playlists */}
             <section
               className={`${
-                mobilePane === 'lyrics' ? 'hidden lg:flex' : 'flex'
+                mobilePane === 'lyrics' ? 'hidden lg:flex' : 'flex pane-swap'
               } flex-col min-h-0 min-w-0 bg-black/15 lg:border-r border-white/[0.08]`}
             >
               <div className="p-3.5 pb-2.5 space-y-2.5 border-b border-white/[0.07] shrink-0">
@@ -2627,7 +2793,10 @@ export default function MusicPlayer() {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              <div
+                key={`${activeCatalogTab}${openPlaylist ? ':open' : ''}`}
+                className={`${['songs', 'albums', 'artists', 'playlists'].includes(activeCatalogTab) ? 'stagger' : 'pane-enter'} flex-1 overflow-y-auto p-3 space-y-2`}
+              >
                 {activeCatalogTab === 'settings' && (
                   <SettingsView
                     suit={suit}
@@ -2646,6 +2815,12 @@ export default function MusicPlayer() {
                     setLockLyrics={handleSetLock}
                     notifLyrics={notifLyrics}
                     setNotifLyrics={setNotifLyrics}
+                    sleepLeft={sleepLeft}
+                    sleepEot={sleepEot}
+                    onSleepStart={startSleep}
+                    onSleepEot={startSleepEot}
+                    onSleepAdd={addSleep}
+                    onSleepCancel={cancelSleep}
                   />
                 )}
 
@@ -2850,7 +3025,7 @@ export default function MusicPlayer() {
             {/* Right Pane: Now Playing + Audio/Video Player + Synced Auto-Scrolling Lyrics */}
             <section
               className={`${
-                mobilePane === 'catalog' ? 'hidden lg:flex' : 'flex'
+                mobilePane === 'catalog' ? 'hidden lg:flex' : 'flex pane-swap'
               } flex-col min-h-0 min-w-0 p-4 gap-3.5 overflow-hidden`}
               style={{
                 background: `radial-gradient(circle at 50% 15%, ${suit.orbA}, transparent 72%)`,
@@ -3050,7 +3225,7 @@ export default function MusicPlayer() {
                             }
                           : undefined
                       }
-                      className={`text-lg sm:text-xl font-extrabold leading-snug tracking-tight cursor-pointer transition-all duration-300 ${
+                      className={`text-lg sm:text-xl font-extrabold leading-snug tracking-tight cursor-pointer origin-left transition-all duration-500 ${
                         isActive
                           ? 'scale-[1.03] opacity-100'
                           : isPassed
@@ -3238,7 +3413,7 @@ export default function MusicPlayer() {
       {/* Lirik layar penuh */}
       {fullLyrics && createPortal(
         <div
-          className="flex flex-col"
+          className={`flex flex-col ${lyricsClosing ? 'sheet-down' : 'sheet-up'}`}
           style={{
             position: 'fixed',
             top: 0,
@@ -3265,7 +3440,7 @@ export default function MusicPlayer() {
             </div>
             <button
               type="button"
-              onClick={() => setFullLyrics(false)}
+              onClick={closeFullLyrics}
               aria-label="Tutup lirik penuh"
               className="p-2.5 rounded-full bg-white/10 text-white active:scale-90 transition"
             >
@@ -3297,7 +3472,7 @@ export default function MusicPlayer() {
                       ? { color: '#ffffff', textShadow: `0 0 18px ${suit.glow}, 0 0 34px ${suit.glow}` }
                       : undefined
                   }
-                  className={`text-2xl font-extrabold leading-snug tracking-tight cursor-pointer transition-all duration-300 ${
+                  className={`text-2xl font-extrabold leading-snug tracking-tight cursor-pointer transition-all duration-500 ${
                     isActive
                       ? 'opacity-100'
                       : isPassed
@@ -3444,14 +3619,20 @@ export default function MusicPlayer() {
       )}
 
       {/* Navigasi bawah (HP) */}
-      <nav aria-label="Navigasi" className="lg:hidden fixed bottom-0 inset-x-0 z-30 h-14 flex items-stretch gap-1 px-1.5 bg-[#0b0b10]/70 backdrop-blur-2xl backdrop-saturate-150 border-t border-white/[0.12]">
-        {[
-          { id: 'home', label: 'Beranda', icon: Home },
-          { id: 'songs', label: 'Cari', icon: Search },
-          { id: 'playlists', label: 'Playlist', icon: ListMusic },
-          { id: 'lyrics', label: 'Lirik', icon: Mic2 },
-          { id: 'settings', label: 'Setelan', icon: Settings },
-        ].map((tab) => {
+      <nav aria-label="Navigasi" className="lg:hidden fixed bottom-0 inset-x-0 z-30 h-14 flex items-stretch px-1.5 bg-[#0b0b10]/70 backdrop-blur-2xl backdrop-saturate-150 border-t border-white/[0.12]">
+        <span
+          aria-hidden="true"
+          className="absolute top-1.5 bottom-1.5 rounded-2xl pointer-events-none"
+          style={{
+            left: '0.375rem',
+            width: 'calc((100% - 0.75rem) / 5)',
+            transform: `translate3d(${Math.max(0, MOBILE_TABS.findIndex((t) => t.id === (mobilePane === 'lyrics' ? 'lyrics' : activeCatalogTab))) * 100}%, 0, 0)`,
+            opacity: MOBILE_TABS.some((t) => t.id === (mobilePane === 'lyrics' ? 'lyrics' : activeCatalogTab)) ? 1 : 0,
+            backgroundColor: 'rgba(255,255,255,0.09)',
+            transition: 'transform 460ms cubic-bezier(0.32,0.72,0,1), opacity 200ms ease',
+          }}
+        />
+        {MOBILE_TABS.map((tab) => {
           const Icon = tab.icon;
           const active = tab.id === 'lyrics' ? mobilePane === 'lyrics' : mobilePane === 'catalog' && activeCatalogTab === tab.id;
           return (
@@ -3468,8 +3649,8 @@ export default function MusicPlayer() {
                   if (tab.id === 'songs') setTimeout(() => searchInputRef.current?.focus(), 150);
                 }
               }}
-              className="flex-1 my-1.5 rounded-2xl flex flex-col items-center justify-center gap-0.5 active:scale-90 transition-[transform,background-color,color] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)]"
-              style={{ color: active ? suit.primary : '#a3a3a3', backgroundColor: active ? 'rgba(255,255,255,0.09)' : 'transparent' }}
+              className="relative flex-1 my-1.5 rounded-2xl flex flex-col items-center justify-center gap-0.5 active:scale-90 transition-[transform,color] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)]"
+              style={{ color: active ? suit.primary : '#a3a3a3' }}
             >
               <Icon className="w-5 h-5 transition-transform duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)]" style={{ transform: active ? 'translateY(-1px) scale(1.12)' : 'none' }} />
               <span className="text-[10px] font-bold">{tab.label}</span>

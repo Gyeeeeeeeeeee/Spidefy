@@ -296,9 +296,9 @@ function PlaylistEditor({ suit, initial, title, saveLabel, onSave, onClose }) {
   const previewPl = { cover, tracks: initial.tracks || [], coverVideoId: keepVideo ? initial.coverVideoId : null };
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/80" onClick={onClose}>
+    <div className="fade-in fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/80" onClick={onClose}>
       <div
-        className="w-full sm:max-w-sm max-h-[92dvh] overflow-y-auto rounded-t-3xl sm:rounded-3xl bg-[#14141b] border border-white/15 p-5 space-y-4"
+        className="sheet-up w-full sm:max-w-sm max-h-[92dvh] overflow-y-auto rounded-t-3xl sm:rounded-3xl bg-[#14141b] border border-white/15 p-5 space-y-4"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
