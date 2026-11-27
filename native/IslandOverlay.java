@@ -143,6 +143,8 @@ public class IslandOverlay {
   private TextView expTitle;
   private TextView expArtist;
   private TextView lyricTv;
+  private TextView lyricPrev;
+  private TextView lyricNext;
   private TextView closeBtn;
   private boolean dismissed = false;
   private TextView elapsedTv;
@@ -342,6 +344,23 @@ public class IslandOverlay {
       lineMs = 0;
     }
     String t = tx[idx];
+    return t == null ? "" : t.trim();
+  }
+
+  /** Baris lirik sebelum (-1) / sesudah (+1) baris aktif. null = tidak ada lirik bertimestamp. */
+  private String lyricNeighbor(int off) {
+    double[] ts = lyricTimes;
+    String[] tx = lyricTexts;
+    if (ts == null || tx == null || ts.length == 0 || ts.length != tx.length) return null;
+    double pos = currentPos();
+    int idx = -1;
+    for (int i = 0; i < ts.length; i++) {
+      if (pos >= ts[i]) idx = i;
+      else break;
+    }
+    int j = idx + off;
+    if (j < 0 || j >= tx.length) return "";
+    String t = tx[j];
     return t == null ? "" : t.trim();
   }
 
@@ -647,10 +666,10 @@ public class IslandOverlay {
   private void createView() {
     wm = (WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE);
     int screenW = ctx.getResources().getDisplayMetrics().widthPixels;
-    compactW = dp(236);
-    compactH = dp(40);
-    expandedW = Math.min(screenW - dp(24), dp(360));
-    expandedH = dp(180);
+    compactW = dp(176);
+    compactH = dp(32);
+    expandedW = Math.min(screenW - dp(28), dp(330));
+    expandedH = dp(124);
     prog = expanded ? 1f : 0f;
 
     root = new FrameLayout(ctx);
@@ -671,78 +690,71 @@ public class IslandOverlay {
       }
     });
 
-    // ---- pil kecil: sampul | judul di tengah | maskot / equalizer ----
+    // ---- pil kecil: sampul | lirik / judul | maskot / equalizer ----
     compact = new LinearLayout(ctx);
     compact.setOrientation(LinearLayout.HORIZONTAL);
     compact.setGravity(Gravity.CENTER_VERTICAL);
-    compact.setPadding(dp(5), 0, dp(5), 0);
-    compactCover = makeCover(dp(15));
-    compact.addView(compactCover, new LinearLayout.LayoutParams(dp(30), dp(30)));
-    compactTitle = makeMarquee(13, true, Color.WHITE);
+    compact.setPadding(dp(4), 0, dp(4), 0);
+    compactCover = makeCover(dp(11));
+    compact.addView(compactCover, new LinearLayout.LayoutParams(dp(24), dp(24)));
+    compactTitle = makeMarquee(11, true, Color.WHITE);
     compactTitle.setGravity(Gravity.CENTER);
     LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-    tlp.leftMargin = dp(8);
-    tlp.rightMargin = dp(8);
+    tlp.leftMargin = dp(6);
+    tlp.rightMargin = dp(6);
     compact.addView(compactTitle, tlp);
     FrameLayout rightSlot = new FrameLayout(ctx);
     chibiCompact = new IslandViews.ChibiView(ctx);
     eqCompact = new IslandViews.EqView(ctx, Color.WHITE);
-    rightSlot.addView(chibiCompact, new FrameLayout.LayoutParams(dp(30), dp(30)));
-    rightSlot.addView(eqCompact, new FrameLayout.LayoutParams(dp(30), dp(30)));
-    compact.addView(rightSlot, new LinearLayout.LayoutParams(dp(30), dp(30)));
+    rightSlot.addView(chibiCompact, new FrameLayout.LayoutParams(dp(24), dp(24)));
+    rightSlot.addView(eqCompact, new FrameLayout.LayoutParams(dp(24), dp(24)));
+    compact.addView(rightSlot, new LinearLayout.LayoutParams(dp(24), dp(24)));
     root.addView(compact, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, compactH));
 
-    // ---- kartu terbuka ----
+    // ---- kartu terbuka: kiri = sampul, judul, progress, tombol | kanan = 3 baris lirik ----
     expandedBox = new LinearLayout(ctx);
-    expandedBox.setOrientation(LinearLayout.VERTICAL);
-    expandedBox.setPadding(dp(16), dp(14), dp(16), dp(10));
+    expandedBox.setOrientation(LinearLayout.HORIZONTAL);
+    expandedBox.setGravity(Gravity.CENTER_VERTICAL);
+    expandedBox.setPadding(dp(14), dp(10), dp(14), dp(8));
+
+    LinearLayout left = new LinearLayout(ctx);
+    left.setOrientation(LinearLayout.VERTICAL);
 
     LinearLayout head = new LinearLayout(ctx);
     head.setOrientation(LinearLayout.HORIZONTAL);
     head.setGravity(Gravity.CENTER_VERTICAL);
-    expandedCover = makeCover(dp(12));
+    expandedCover = makeCover(dp(9));
     expandedCover.setOnClickListener(new View.OnClickListener() {
       @Override
       public void onClick(View v) {
         openApp();
       }
     });
-    head.addView(expandedCover, new LinearLayout.LayoutParams(dp(54), dp(54)));
+    head.addView(expandedCover, new LinearLayout.LayoutParams(dp(38), dp(38)));
     LinearLayout names = new LinearLayout(ctx);
     names.setOrientation(LinearLayout.VERTICAL);
     names.setGravity(Gravity.CENTER_VERTICAL);
-    expTitle = makeText(15, true, Color.WHITE);
-    expArtist = makeText(12, false, Color.parseColor("#B0FFFFFF"));
+    expTitle = makeText(12, true, Color.WHITE);
+    expArtist = makeText(10, false, Color.parseColor("#B0FFFFFF"));
     names.addView(expTitle);
     LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-    alp.topMargin = dp(3);
+    alp.topMargin = dp(2);
     names.addView(expArtist, alp);
     LinearLayout.LayoutParams nlp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-    nlp.leftMargin = dp(12);
-    nlp.rightMargin = dp(8);
+    nlp.leftMargin = dp(8);
     head.addView(names, nlp);
-    FrameLayout rightSlot2 = new FrameLayout(ctx);
+    // maskot / equalizer versi besar tidak dipakai lagi di kartu kecil (objek tetap dibuat supaya tema aman)
     chibiExpanded = new IslandViews.ChibiView(ctx);
     eqExpanded = new IslandViews.EqView(ctx, Color.WHITE);
-    rightSlot2.addView(chibiExpanded, new FrameLayout.LayoutParams(dp(34), dp(34)));
-    rightSlot2.addView(eqExpanded, new FrameLayout.LayoutParams(dp(34), dp(34)));
-    head.addView(rightSlot2, new LinearLayout.LayoutParams(dp(34), dp(34)));
-    expandedBox.addView(head, new LinearLayout.LayoutParams(
+    left.addView(head, new LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-
-    lyricTv = makeMarquee(13, true, Color.WHITE);
-    lyricTv.setGravity(Gravity.CENTER);
-    LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(
-        LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-    llp.topMargin = dp(8);
-    expandedBox.addView(lyricTv, llp);
 
     LinearLayout prow = new LinearLayout(ctx);
     prow.setOrientation(LinearLayout.HORIZONTAL);
     prow.setGravity(Gravity.CENTER_VERTICAL);
-    elapsedTv = makeText(10, true, Color.parseColor("#B0FFFFFF"));
-    remainTv = makeText(10, true, Color.parseColor("#B0FFFFFF"));
+    elapsedTv = makeText(9, true, Color.parseColor("#B0FFFFFF"));
+    remainTv = makeText(9, true, Color.parseColor("#B0FFFFFF"));
     progressView = new IslandViews.ProgressView(ctx, Color.parseColor("#44FFFFFF"), Color.WHITE);
     progressView.setOnSeek(new IslandViews.ProgressView.OnSeek() {
       @Override
@@ -753,15 +765,15 @@ public class IslandOverlay {
       }
     });
     prow.addView(elapsedTv);
-    LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(0, dp(22), 1f);
-    plp.leftMargin = dp(8);
-    plp.rightMargin = dp(8);
+    LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(0, dp(16), 1f);
+    plp.leftMargin = dp(6);
+    plp.rightMargin = dp(6);
     prow.addView(progressView, plp);
     prow.addView(remainTv);
     LinearLayout.LayoutParams prlp = new LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
     prlp.topMargin = dp(4);
-    expandedBox.addView(prow, prlp);
+    left.addView(prow, prlp);
 
     LinearLayout controls = new LinearLayout(ctx);
     controls.setOrientation(LinearLayout.HORIZONTAL);
@@ -779,14 +791,43 @@ public class IslandOverlay {
     prevIv.setOnClickListener(actionClick("prev"));
     nextIv.setOnClickListener(actionClick("next"));
     playWrap.setOnClickListener(actionClick("toggle"));
-    controls.addView(prevIv, new LinearLayout.LayoutParams(dp(56), dp(44)));
-    LinearLayout.LayoutParams pwlp = new LinearLayout.LayoutParams(dp(46), dp(46));
-    pwlp.leftMargin = dp(14);
-    pwlp.rightMargin = dp(14);
+    controls.addView(prevIv, new LinearLayout.LayoutParams(dp(40), dp(30)));
+    LinearLayout.LayoutParams pwlp = new LinearLayout.LayoutParams(dp(30), dp(30));
+    pwlp.leftMargin = dp(8);
+    pwlp.rightMargin = dp(8);
     controls.addView(playWrap, pwlp);
-    controls.addView(nextIv, new LinearLayout.LayoutParams(dp(56), dp(44)));
-    expandedBox.addView(controls, new LinearLayout.LayoutParams(
+    controls.addView(nextIv, new LinearLayout.LayoutParams(dp(40), dp(30)));
+    LinearLayout.LayoutParams clp2 = new LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+    clp2.topMargin = dp(2);
+    left.addView(controls, clp2);
+    expandedBox.addView(left, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.15f));
+
+    // garis pemisah
+    View divider = new View(ctx);
+    divider.setBackgroundColor(Color.parseColor("#26FFFFFF"));
+    LinearLayout.LayoutParams dvlp = new LinearLayout.LayoutParams(dp(1), dp(72));
+    dvlp.leftMargin = dp(10);
+    dvlp.rightMargin = dp(10);
+    expandedBox.addView(divider, dvlp);
+
+    // kolom kanan: baris sebelumnya (redup) / baris sekarang (tebal) / baris berikutnya (redup)
+    LinearLayout right = new LinearLayout(ctx);
+    right.setOrientation(LinearLayout.VERTICAL);
+    right.setGravity(Gravity.CENTER_VERTICAL);
+    lyricPrev = makeText(11, true, Color.parseColor("#66FFFFFF"));
+    lyricTv = makeMarquee(12, true, Color.WHITE);
+    lyricNext = makeText(11, true, Color.parseColor("#66FFFFFF"));
+    right.addView(lyricPrev, new LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+    LinearLayout.LayoutParams curlp = new LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+    curlp.topMargin = dp(6);
+    curlp.bottomMargin = dp(6);
+    right.addView(lyricTv, curlp);
+    right.addView(lyricNext, new LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+    expandedBox.addView(right, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
     root.addView(expandedBox, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, expandedH));
 
@@ -794,7 +835,7 @@ public class IslandOverlay {
     closeBtn = new TextView(ctx);
     closeBtn.setText("\u00D7");
     closeBtn.setTextColor(Color.WHITE);
-    closeBtn.setTextSize(18);
+    closeBtn.setTextSize(13);
     closeBtn.setTypeface(Typeface.DEFAULT_BOLD);
     closeBtn.setGravity(Gravity.CENTER);
     closeBtn.setIncludeFontPadding(false);
@@ -808,9 +849,9 @@ public class IslandOverlay {
         dismiss();
       }
     });
-    FrameLayout.LayoutParams clp = new FrameLayout.LayoutParams(dp(30), dp(30), Gravity.BOTTOM | Gravity.END);
-    clp.rightMargin = dp(14);
-    clp.bottomMargin = dp(12);
+    FrameLayout.LayoutParams clp = new FrameLayout.LayoutParams(dp(20), dp(20), Gravity.TOP | Gravity.END);
+    clp.rightMargin = dp(8);
+    clp.topMargin = dp(7);
     root.addView(closeBtn, clp);
 
     int type = Build.VERSION.SDK_INT >= 26
@@ -826,7 +867,7 @@ public class IslandOverlay {
             | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
         PixelFormat.TRANSLUCENT);
     params.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-    params.y = statusBarH() + dp(6); // di bawah status bar, tidak menutupi jam / ikon notifikasi
+    params.y = statusBarH() + dp(4); // di bawah status bar, tidak menutupi jam / ikon notifikasi
 
     // Jendela dibungkus 'host'. Animasi buka/tutup hanya mengubah ukuran view di dalamnya
     // (bukan jendela tiap frame), jadi jauh lebih halus.
@@ -905,7 +946,7 @@ public class IslandOverlay {
       lp.height = nh;
       root.setLayoutParams(lp);
     }
-    float big = dp(30);
+    float big = dp(26);
     radiusPx = compactH / 2f + (big - compactH / 2f) * clamp01(p);
     float ca = clamp01(1f - p * 2.4f);
     float ea = clamp01((p - 0.35f) / 0.5f);
@@ -982,6 +1023,14 @@ public class IslandOverlay {
     String compactText = lyric.length() > 0 ? lyric : (title.length() > 0 ? title : "SpideyFy");
     swapText(compactTitle, compactText);
     swapText(lyricTv, lyric.length() > 0 ? lyric : "\u266A");
+    String prevL = lyricNeighbor(-1);
+    String nextL = lyricNeighbor(1);
+    if (prevL == null) {
+      prevL = lines[1] != null ? lines[1].trim() : "";
+      nextL = lines[3] != null ? lines[3].trim() : "";
+    }
+    swapText(lyricPrev, prevL);
+    swapText(lyricNext, nextL);
   }
 
   private void applyState() {
