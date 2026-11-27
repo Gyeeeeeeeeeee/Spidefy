@@ -36,6 +36,8 @@ public class LockLyricsActivity extends Activity implements IslandOverlay.StateO
   private GradientDrawable bg;
   private final TextView[] lyricTvs = new TextView[5];
   private LinearLayout lyricBox;
+  private KineticLyricsView kinetic;
+  private String appliedStyle = "";
   private String[] prevLines = null;
   private ImageView coverIv;
   private TextView titleTv;
@@ -160,7 +162,15 @@ public class LockLyricsActivity extends Activity implements IslandOverlay.StateO
       lyricBox.addView(t, lp);
       lyricTvs[i] = t;
     }
-    col.addView(lyricBox, new LinearLayout.LayoutParams(
+    // wadah lirik: gaya klasik (5 baris) atau gaya Webtype (kinetik), salah satu yang tampil
+    FrameLayout lyricHost = new FrameLayout(this);
+    lyricHost.addView(lyricBox, new FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+    kinetic = new KineticLyricsView(this, st);
+    kinetic.setVisibility(View.GONE);
+    lyricHost.addView(kinetic, new FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+    col.addView(lyricHost, new LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
     // kartu media
@@ -321,6 +331,7 @@ public class LockLyricsActivity extends Activity implements IslandOverlay.StateO
     refresh();
     ui.removeCallbacks(tick);
     ui.post(tick);
+    if (kinetic != null && kinetic.getVisibility() == View.VISIBLE) kinetic.kick();
   }
 
   @Override
@@ -328,6 +339,7 @@ public class LockLyricsActivity extends Activity implements IslandOverlay.StateO
     super.onStop();
     st.removeObserver(this);
     ui.removeCallbacks(tick);
+    if (kinetic != null) kinetic.pause();
   }
 
   @Override
@@ -356,15 +368,34 @@ public class LockLyricsActivity extends Activity implements IslandOverlay.StateO
     if (st.theme.equals(appliedTheme)) return;
     appliedTheme = st.theme;
     boolean spidey = "spidey".equals(st.theme);
-    if (spidey) {
+    if ("webtype".equals(st.lockStyle)) {
+      bg.setColors(new int[] { 0xFF000000, 0xFF000000, 0xFF000000 }); // hitam pekat (hemat di OLED)
+    } else if (spidey) {
       bg.setColors(new int[] { 0xFF4A0B14, 0xFF140A2E, 0xFF05060F });
     } else {
       bg.setColors(new int[] { 0xFF15151B, 0xFF08080B, 0xFF000000 });
     }
     playIv.setColor(spidey ? 0xFFE62429 : Color.BLACK);
+    if (kinetic != null) kinetic.setAccent(spidey ? 0xFFE62429 : Color.WHITE);
+  }
+
+  /** Ganti antara gaya Klasik dan Webtype. */
+  private void applyStyle() {
+    String want = "webtype".equals(st.lockStyle) ? "webtype" : "classic";
+    if (want.equals(appliedStyle)) return;
+    appliedStyle = want;
+    appliedTheme = ""; // paksa warna latar dihitung ulang
+    boolean web = "webtype".equals(want);
+    lyricBox.setVisibility(web ? View.GONE : View.VISIBLE);
+    kinetic.setVisibility(web ? View.VISIBLE : View.GONE);
+    timeTv.setTextSize(web ? 40 : 76); // jam dikecilkan supaya lirik dapat ruang
+    if (web) kinetic.kick();
+    else kinetic.pause();
+    prevLines = null;
   }
 
   private void refresh() {
+    applyStyle();
     applyTheme();
     titleTv.setText(st.title);
     artistTv.setText(st.artist);
@@ -372,7 +403,8 @@ public class LockLyricsActivity extends Activity implements IslandOverlay.StateO
     else coverIv.setImageDrawable(null);
     playIv.setType(st.playing ? IslandViews.PAUSE : IslandViews.PLAY);
 
-    applyLyrics();
+    if ("webtype".equals(appliedStyle)) kinetic.kick();
+    else applyLyrics();
     updateProgress();
   }
 

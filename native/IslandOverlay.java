@@ -169,6 +169,10 @@ public class IslandOverlay {
   // saat app di-Home (JavaScript WebView sering ditahan sistem di latar belakang).
   private volatile double[] lyricTimes = null;
   private volatile String[] lyricTexts = null;
+  // Data lirik khusus layar kunci (terpisah dari pil Island) + gaya tampilannya
+  private volatile double[] lockTimes = null;
+  private volatile String[] lockTexts = null;
+  public String lockStyle = "classic"; // "classic" | "webtype"
   private String lastLineSeen = "";
   private long lastLineAt = 0L;
   private long estSpanMs = 4000L;
@@ -267,6 +271,40 @@ public class IslandOverlay {
         ensureReceiver();
       }
     });
+  }
+
+  public void setLockStyle(final String s) {
+    ui.post(new Runnable() {
+      @Override
+      public void run() {
+        lockStyle = "webtype".equals(s) ? "webtype" : "classic";
+        notifyObservers();
+      }
+    });
+  }
+
+  public void setLockLyricData(final double[] times, final String[] texts) {
+    ui.post(new Runnable() {
+      @Override
+      public void run() {
+        if (times == null || texts == null || times.length == 0 || times.length != texts.length) {
+          lockTimes = null;
+          lockTexts = null;
+        } else {
+          lockTimes = times;
+          lockTexts = texts;
+        }
+        notifyObservers();
+      }
+    });
+  }
+
+  public double[] lockTimes() {
+    return lockTimes;
+  }
+
+  public String[] lockTexts() {
+    return lockTexts;
   }
 
   public void setLyrics(final double[] times, final String[] texts) {
