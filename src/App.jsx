@@ -464,18 +464,24 @@ function formatDuration(sec) {
 
 function parseLrcText(lrcText) {
   const out = [];
-  const pattern = /\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]\s*(.*)/;
-  String(lrcText || '')
-    .split(/\r?\n/)
-    .forEach((line) => {
-      const match = line.match(pattern);
-      if (!match) return;
-      const min = parseInt(match[1], 10);
-      const sec = parseInt(match[2], 10);
-      const ms = match[3] ? parseInt(match[3].padEnd(3, '0').slice(0, 3), 10) / 1000 : 0;
-      const text = match[4].trim();
-      if (text) out.push({ time: min * 60 + sec + ms, text });
+  const raw = String(lrcText || '');
+  // tag [offset:+/-ms] dari file LRC (positif = lirik tampil lebih awal)
+  const offM = raw.match(/\[offset:\s*([+-]?\d+)\s*\]/i);
+  const fileOffset = offM ? parseInt(offM[1], 10) / 1000 : 0;
+  const stamp = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
+  raw.split(/\r?\n/).forEach((line) => {
+    const stamps = [...line.matchAll(stamp)];
+    if (!stamps.length) return;
+    const text = line.replace(stamp, '').replace(/<\d+:\d+(?:\.\d+)?>/g, '').trim();
+    if (!text) return;
+    stamps.forEach((m) => {
+      const min = parseInt(m[1], 10);
+      const sec = parseInt(m[2], 10);
+      const ms = m[3] ? parseInt(m[3].padEnd(3, '0').slice(0, 3), 10) / 1000 : 0;
+      out.push({ time: Math.max(0, min * 60 + sec + ms - fileOffset), text });
     });
+  });
+  out.sort((a, b) => a.time - b.time);
   return out;
 }
 
@@ -512,7 +518,7 @@ function lyricsMatch(item, track, cleanTitle, durSec) {
     const hit = a1.split(' ').some((w) => w.length > 2 && words2.includes(w));
     if (!hit && !a2.includes(a1) && !a1.includes(a2)) return false;
   }
-  if (item.duration && Math.abs(Number(item.duration) - durSec) > 5) return false;
+  if (item.duration && Math.abs(Number(item.duration) - durSec) > 3) return false;
   return true;
 }
 
@@ -649,6 +655,24 @@ function RepeatButton({ mode, onClick, suit, big }) {
     >
       <Icon className={big ? 'w-6 h-6' : 'w-4 h-4'} />
     </button>
+  );
+}
+
+function LyricSyncControl({ offset, onNudge, compact }) {
+  const btn = 'px-2.5 py-1 rounded-full bg-white/10 text-[11px] font-bold text-white active:scale-95 transition tabular-nums';
+  return (
+    <div className={`flex items-center justify-center gap-1.5 flex-wrap ${compact ? '' : 'px-2'}`}>
+      <button type="button" className={btn} onClick={() => onNudge(-0.5)}>Lirik telat −0.5s</button>
+      <button
+        type="button"
+        className={btn}
+        onClick={() => onNudge(0)}
+        aria-label="Reset sinkron lirik"
+      >
+        {offset === 0 ? 'Sinkron 0s' : `${offset > 0 ? '+' : ''}${offset.toFixed(1)}s ✕`}
+      </button>
+      <button type="button" className={btn} onClick={() => onNudge(0.5)}>Lirik kecepetan +0.5s</button>
+    </div>
   );
 }
 
@@ -936,7 +960,7 @@ function askBackgroundPermission() {
   return true;
 }
 
-const BACKUP_KEYS = ['spideyfy-playlists', 'spideyfy-prefs', 'spideyfy-history'];
+const BACKUP_KEYS = ['spideyfy-playlists', 'spideyfy-prefs', 'spideyfy-history', 'spideyfy-lyric-offsets'];
 
 function BackupSection({ suit }) {
   const [text, setText] = useState('');
@@ -1270,7 +1294,23 @@ export default function MusicPlayer() {
   const [lyricsSource, setLyricsSource] = useState('Synced Lyrics');
   const [lyricsSynced, setLyricsSynced] = useState(true);
   const lyricsReqRef = useRef(0);
-  const [activeLineIndex, setActiveLineIndex] = useState(0);
+  const [activeLineIndex, setActiveLineIndex] = useState(-1);
+  // geser sinkron lirik per lagu (detik). positif = lirik ditunda (untuk lirik yang kecepetan)
+  const [lyricOffsets, setLyricOffsets] = useState(() => readSaved('spideyfy-lyric-offsets', {}));
+  const trackKey = String(currentTrack?.videoId || currentTrack?.id || '');
+  const lyricOffset = Number(lyricOffsets[trackKey]) || 0;
+  const lyricOffsetRef = useRef(0);
+  lyricOffsetRef.current = lyricOffset;
+  const nudgeLyrics = (delta) => {
+    if (!trackKey) return;
+    setLyricOffsets((prev) => {
+      const v = delta === 0 ? 0 : Math.round(((Number(prev[trackKey]) || 0) + delta) * 10) / 10;
+      const next = { ...prev };
+      if (v === 0) delete next[trackKey]; else next[trackKey] = v;
+      writeSaved('spideyfy-lyric-offsets', next);
+      return next;
+    });
+  };
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggest, setShowSuggest] = useState(false);
   const suggestSkipRef = useRef(false);
@@ -1563,7 +1603,7 @@ export default function MusicPlayer() {
         setCurrentTime(ytCur);
         if (ytDur > 0) setDuration(ytDur);
       }
-    }, 500);
+    }, 250);
     return () => clearInterval(interval);
   }, [isPlaying, playbackMode, duration]);
 
@@ -1573,16 +1613,17 @@ export default function MusicPlayer() {
       setActiveLineIndex(-1);
       return;
     }
-    let idx = 0;
+    let idx = -1;
+    const t = currentTime - lyricOffset;
     for (let i = 0; i < lyrics.length; i += 1) {
-      if (currentTime >= lyrics[i].time) {
+      if (t >= lyrics[i].time) {
         idx = i;
       } else {
         break;
       }
     }
     setActiveLineIndex(idx);
-  }, [currentTime, lyrics, lyricsSynced]);
+  }, [currentTime, lyrics, lyricsSynced, lyricOffset]);
 
   // Smooth auto-scroll active lyric line into view
   useEffect(() => {
@@ -1649,6 +1690,9 @@ export default function MusicPlayer() {
         if (isStale()) return;
 
         const valid = list.filter((i) => lyricsMatch(i, track, cleanTitle, durSec));
+        const byDur = (a, b) =>
+          Math.abs((Number(a.duration) || durSec) - durSec) - Math.abs((Number(b.duration) || durSec) - durSec);
+        valid.sort(byDur);
         const syncedItem = valid.find((i) => i.syncedLyrics && !i.instrumental);
         if (syncedItem) {
           const parsed = parseLrcText(syncedItem.syncedLyrics);
@@ -2169,10 +2213,10 @@ export default function MusicPlayer() {
     if (!ISLAND_OK) return;
     const ok = islandLyrics && lyricsSynced && Array.isArray(lyrics) && lyrics.length > 0;
     Island.setLyrics({
-      times: ok ? lyrics.map((l) => Number(l.time) || 0) : [],
+      times: ok ? lyrics.map((l) => (Number(l.time) || 0) + lyricOffset) : [],
       texts: ok ? lyrics.map((l) => String(l.text || '').trim()) : [],
     }).catch(() => {});
-  }, [lyrics, lyricsSynced, islandLyrics, currentTrack]);
+  }, [lyrics, lyricsSynced, islandLyrics, currentTrack, lyricOffset]);
 
   // kalau posisi lompat (seek), kabari Island supaya progress-nya ikut
   useEffect(() => {
@@ -3326,6 +3370,10 @@ export default function MusicPlayer() {
                 )}
               </div>
 
+              {lyrics.length > 0 && lyricsSynced && (
+                <LyricSyncControl offset={lyricOffset} onNudge={nudgeLyrics} compact />
+              )}
+
               {/* Synced Auto-Scrolling Lyrics Panel */}
               <div
                 ref={lyricsScrollRef}
@@ -3346,7 +3394,7 @@ export default function MusicPlayer() {
                     <p
                       key={`${line.time}-${i}`}
                       ref={isActive ? activeLineRef : null}
-                      onClick={() => { if (lyricsSynced) seekToSec(line.time); }}
+                      onClick={() => { if (lyricsSynced) seekToSec(Math.max(0, line.time + lyricOffsetRef.current)); }}
                       style={
                         isActive
                           ? {
@@ -3578,6 +3626,12 @@ export default function MusicPlayer() {
             </button>
           </div>
 
+          {lyrics.length > 0 && lyricsSynced && (
+            <div className="shrink-0 pb-1">
+              <LyricSyncControl offset={lyricOffset} onNudge={nudgeLyrics} compact />
+            </div>
+          )}
+
           <div
             ref={fullLyricsRef}
             className="relative flex-1 min-h-0 overflow-y-auto px-5 py-10 space-y-5"
@@ -3596,7 +3650,7 @@ export default function MusicPlayer() {
                 <p
                   id={`full-line-${i}`}
                   key={`full-${line.time}-${i}`}
-                  onClick={() => { if (lyricsSynced) seekToSec(line.time); }}
+                  onClick={() => { if (lyricsSynced) seekToSec(Math.max(0, line.time + lyricOffsetRef.current)); }}
                   style={
                     isActive
                       ? { color: '#ffffff', textShadow: `0 0 18px ${suit.glow}, 0 0 34px ${suit.glow}` }
