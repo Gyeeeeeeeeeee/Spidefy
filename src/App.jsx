@@ -658,24 +658,6 @@ function RepeatButton({ mode, onClick, suit, big }) {
   );
 }
 
-function LyricSyncControl({ offset, onNudge, compact }) {
-  const btn = 'px-2.5 py-1 rounded-full bg-white/10 text-[11px] font-bold text-white active:scale-95 transition tabular-nums';
-  return (
-    <div className={`flex items-center justify-center gap-1.5 flex-wrap ${compact ? '' : 'px-2'}`}>
-      <button type="button" className={btn} onClick={() => onNudge(-0.5)}>Lirik telat −0.5s</button>
-      <button
-        type="button"
-        className={btn}
-        onClick={() => onNudge(0)}
-        aria-label="Reset sinkron lirik"
-      >
-        {offset === 0 ? 'Sinkron 0s' : `${offset > 0 ? '+' : ''}${offset.toFixed(1)}s ✕`}
-      </button>
-      <button type="button" className={btn} onClick={() => onNudge(0.5)}>Lirik kecepetan +0.5s</button>
-    </div>
-  );
-}
-
 function readSaved(key, fallback) {
   try {
     const raw = localStorage.getItem(key);
@@ -960,7 +942,7 @@ function askBackgroundPermission() {
   return true;
 }
 
-const BACKUP_KEYS = ['spideyfy-playlists', 'spideyfy-prefs', 'spideyfy-history', 'spideyfy-lyric-offsets'];
+const BACKUP_KEYS = ['spideyfy-playlists', 'spideyfy-prefs', 'spideyfy-history'];
 
 function BackupSection({ suit }) {
   const [text, setText] = useState('');
@@ -1295,22 +1277,6 @@ export default function MusicPlayer() {
   const [lyricsSynced, setLyricsSynced] = useState(true);
   const lyricsReqRef = useRef(0);
   const [activeLineIndex, setActiveLineIndex] = useState(-1);
-  // geser sinkron lirik per lagu (detik). positif = lirik ditunda (untuk lirik yang kecepetan)
-  const [lyricOffsets, setLyricOffsets] = useState(() => readSaved('spideyfy-lyric-offsets', {}));
-  const trackKey = String(currentTrack?.videoId || currentTrack?.id || '');
-  const lyricOffset = Number(lyricOffsets[trackKey]) || 0;
-  const lyricOffsetRef = useRef(0);
-  lyricOffsetRef.current = lyricOffset;
-  const nudgeLyrics = (delta) => {
-    if (!trackKey) return;
-    setLyricOffsets((prev) => {
-      const v = delta === 0 ? 0 : Math.round(((Number(prev[trackKey]) || 0) + delta) * 10) / 10;
-      const next = { ...prev };
-      if (v === 0) delete next[trackKey]; else next[trackKey] = v;
-      writeSaved('spideyfy-lyric-offsets', next);
-      return next;
-    });
-  };
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggest, setShowSuggest] = useState(false);
   const suggestSkipRef = useRef(false);
@@ -1614,7 +1580,7 @@ export default function MusicPlayer() {
       return;
     }
     let idx = -1;
-    const t = currentTime - lyricOffset;
+    const t = currentTime;
     for (let i = 0; i < lyrics.length; i += 1) {
       if (t >= lyrics[i].time) {
         idx = i;
@@ -1623,7 +1589,7 @@ export default function MusicPlayer() {
       }
     }
     setActiveLineIndex(idx);
-  }, [currentTime, lyrics, lyricsSynced, lyricOffset]);
+  }, [currentTime, lyrics, lyricsSynced]);
 
   // Smooth auto-scroll active lyric line into view
   useEffect(() => {
@@ -2213,10 +2179,10 @@ export default function MusicPlayer() {
     if (!ISLAND_OK) return;
     const ok = islandLyrics && lyricsSynced && Array.isArray(lyrics) && lyrics.length > 0;
     Island.setLyrics({
-      times: ok ? lyrics.map((l) => (Number(l.time) || 0) + lyricOffset) : [],
+      times: ok ? lyrics.map((l) => Number(l.time) || 0) : [],
       texts: ok ? lyrics.map((l) => String(l.text || '').trim()) : [],
     }).catch(() => {});
-  }, [lyrics, lyricsSynced, islandLyrics, currentTrack, lyricOffset]);
+  }, [lyrics, lyricsSynced, islandLyrics, currentTrack]);
 
   // kalau posisi lompat (seek), kabari Island supaya progress-nya ikut
   useEffect(() => {
@@ -3370,10 +3336,6 @@ export default function MusicPlayer() {
                 )}
               </div>
 
-              {lyrics.length > 0 && lyricsSynced && (
-                <LyricSyncControl offset={lyricOffset} onNudge={nudgeLyrics} compact />
-              )}
-
               {/* Synced Auto-Scrolling Lyrics Panel */}
               <div
                 ref={lyricsScrollRef}
@@ -3394,7 +3356,7 @@ export default function MusicPlayer() {
                     <p
                       key={`${line.time}-${i}`}
                       ref={isActive ? activeLineRef : null}
-                      onClick={() => { if (lyricsSynced) seekToSec(Math.max(0, line.time + lyricOffsetRef.current)); }}
+                      onClick={() => { if (lyricsSynced) seekToSec(line.time); }}
                       style={
                         isActive
                           ? {
@@ -3626,12 +3588,6 @@ export default function MusicPlayer() {
             </button>
           </div>
 
-          {lyrics.length > 0 && lyricsSynced && (
-            <div className="shrink-0 pb-1">
-              <LyricSyncControl offset={lyricOffset} onNudge={nudgeLyrics} compact />
-            </div>
-          )}
-
           <div
             ref={fullLyricsRef}
             className="relative flex-1 min-h-0 overflow-y-auto px-5 py-10 space-y-5"
@@ -3650,7 +3606,7 @@ export default function MusicPlayer() {
                 <p
                   id={`full-line-${i}`}
                   key={`full-${line.time}-${i}`}
-                  onClick={() => { if (lyricsSynced) seekToSec(Math.max(0, line.time + lyricOffsetRef.current)); }}
+                  onClick={() => { if (lyricsSynced) seekToSec(line.time); }}
                   style={
                     isActive
                       ? { color: '#ffffff', textShadow: `0 0 18px ${suit.glow}, 0 0 34px ${suit.glow}` }
