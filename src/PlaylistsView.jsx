@@ -19,6 +19,7 @@ import {
   Video,
 } from 'lucide-react';
 import { seedQueries, API_BASE } from './reco.js';
+import SwipeRow from './SwipeRow.jsx';
 
 /* ---------- Helpers ---------- */
 
@@ -916,6 +917,7 @@ export function PlaylistDetail({
   isPlaying,
   onBack,
   onPlay,
+  onQueue,
   shuffleOn,
   onToggleShuffle,
   onUpdate,
@@ -1123,8 +1125,11 @@ export function PlaylistDetail({
         {visible.map(({ t, index }) => {
           const active = t.id === currentTrackId;
           return (
-            <div
+            <SwipeRow
               key={`${t.id}-${index}`}
+              color={suit.primary}
+              disabled={editMode}
+              onSwipe={() => onQueue && onQueue(t)}
               onClick={() => !editMode && onPlay(pl, t)}
               className="flex items-center gap-3 px-1 py-1.5 rounded-lg cursor-pointer active:bg-white/[0.06]"
             >
@@ -1188,7 +1193,7 @@ export function PlaylistDetail({
                   <EllipsisVertical className="w-5 h-5" />
                 </button>
               )}
-            </div>
+            </SwipeRow>
           );
         })}
       </div>
