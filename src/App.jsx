@@ -3052,7 +3052,7 @@ export default function MusicPlayer() {
       if (previewRunRef.current !== run) return;
       if (!pp || typeof pp.loadVideoById !== 'function') {
         endPreview(true);
-        setStatusMessage('Preview belum bisa diputar. Coba lagi sebentar lagi.');
+        flashQueue('Preview belum bisa diputar, coba lagi');
         return;
       }
       live = pp;
@@ -3082,7 +3082,7 @@ export default function MusicPlayer() {
         if (st !== 1) {
           if (Date.now() - t0 > 9000) {
             endPreview(true);
-            setStatusMessage('Preview belum bisa diputar. Coba lagi sebentar lagi.');
+            flashQueue('Preview belum bisa diputar, coba lagi');
           } else if (st === 0 && Date.now() > ignoreUntil) {
             endPreview(true);
           }
