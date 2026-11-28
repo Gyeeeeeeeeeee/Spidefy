@@ -513,7 +513,7 @@ const rawNorm = (x) =>
     .trim();
 
 // Penanda versi lagu (hanya dibaca dari kurung / setelah tanda "-", supaya judul seperti "Live Forever" tidak salah)
-const VERSION_TAGS = ['acoustic', 'live', 'remix', 'sped up', 'speed up', 'slowed', 'reverb', 'nightcore', 'piano', 'unplugged', 'demo', 'extended', '8d', 'lofi', 'lo fi', 'cover'];
+const VERSION_TAGS = ['taylor s version', 'from the vault', '10 minute version', 'radio edit', 'album version', 'single version', 'acoustic', 'live', 'remix', 'sped up', 'speed up', 'slowed', 'reverb', 'nightcore', 'piano', 'unplugged', 'demo', 'extended', '8d', 'lofi', 'lo fi', 'cover'];
 
 function titleExtras(title) {
   const t = String(title || '');
@@ -529,16 +529,31 @@ function versionTags(title) {
   return VERSION_TAGS.filter((tag) => ex.includes(` ${tag} `));
 }
 
-// Judul bisa punya embel-embel film / versi: "Sunflower - Spider-Man: Into the Spider-Verse", "Judul (feat. X)"
-function titleVariants(title) {
-  const noParen = String(title || '').replace(/\(.*?\)|\[.*?\]/g, ' ').replace(/\s+/g, ' ').trim();
+// Judul bisa punya embel-embel film / versi: "Sunflower - Spider-Man: Into the Spider-Verse", "Artis - Judul (Official Video)"
+function titleVariants(title, artist) {
+  let noParen = String(title || '').replace(/\(.*?\)|\[.*?\]/g, ' ').replace(/\s+/g, ' ').trim();
+  const noNoise = noParen
+    .replace(/\s+[-|\u2013]?\s*(official(\s+(music|lyric|audio|video))*|lyric\s+video|music\s+video|lyrics?|visuali[sz]er)\b.*$/i, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (noNoise) noParen = noNoise;
   const out = [];
   const add = (v) => {
     const t = String(v || '').replace(/\s+(feat\.?|ft\.?|featuring)\s.*$/i, '').replace(/\s+/g, ' ').trim();
     if (t && !out.includes(t)) out.push(t);
   };
+  // "Nama Artis - Judul": buang nama artis di depan, ini yang paling sering bikin lirik tidak ketemu
+  const parts = noParen.split(/\s[-\u2013\u2014]\s/);
+  if (parts.length > 1 && artist) {
+    const left = normLyr(parts[0]);
+    const a = normLyr(artist);
+    if (left && a && (a.includes(left) || left.includes(a) || wordsOverlap(left, a) >= 0.5)) {
+      add(parts.slice(1).join(' - '));
+      add(parts[1]);
+    }
+  }
   add(noParen);
-  add(noParen.split(/\s[-\u2013\u2014]\s/)[0]);
+  add(parts[0]);
   add(noParen.split(/\s\|\s/)[0]);
   return out;
 }
@@ -550,31 +565,56 @@ function firstArtistOf(artist) {
 }
 
 // Skor kecocokan kandidat LRCLIB. -1 = tidak cocok. Makin tinggi makin baik.
-function lyricsScore(item, track, variants, durSec) {
+// durSec <= 0 berarti durasi lagu belum diketahui -> filter durasi dimatikan.
+function lyricsScore(item, track, variants, durSec, tol = 3, relaxed = false) {
   if (!item) return -1;
   const t1 = normLyr(item.trackName || item.name);
   if (!t1) return -1;
   const itemBase = normLyr(String(item.trackName || item.name || '').split(/\s[-\u2013\u2014]\s/)[0]);
+  let titleExact = false;
   const titleOk = variants.some((v) => {
     const t2 = normLyr(v);
-    return t2 && (t1 === t2 || itemBase === t2 || wordsOverlap(t1, t2) >= 0.8);
+    if (!t2) return false;
+    if (t1 === t2 || itemBase === t2) {
+      titleExact = true;
+      return true;
+    }
+    return wordsOverlap(t1, t2) >= 0.8;
   });
   if (!titleOk) return -1;
   const a1 = normLyr(item.artistName);
   const a2 = normLyr(track.artist);
-  if (a1 && a2) {
+  if (a1 && a2 && !(relaxed && titleExact)) {
     const words2 = a2.split(' ');
     const hit = a1.split(' ').some((w) => w.length > 2 && words2.includes(w));
     if (!hit && !a2.includes(a1) && !a1.includes(a2)) return -1;
   }
-  const d = item.duration ? Math.abs(Number(item.duration) - durSec) : 2;
-  if (d > 3) return -1;
-  let score = 100 - d * 12;
+  let d = 2;
+  if (durSec > 0 && item.duration) {
+    d = Math.abs(Number(item.duration) - durSec);
+    if (d > tol) return -1;
+  }
+  let score = 100 - d * (relaxed ? 5 : 12);
   if (item.syncedLyrics) score += 15;
   const want = versionTags(track.title).join('|');
   const got = versionTags(item.trackName || item.name).join('|');
   if (want !== got) score -= 60; // versi lain (mis. acoustic vs studio): boleh dipakai, tapi paling akhir
   return score;
+}
+
+// Hasil pencarian lirik disimpan di memori supaya lagu yang diputar ulang langsung muncul liriknya
+const LYRICS_CACHE = new Map();
+
+// Kompensasi jeda render + audio: baris lirik dimajukan sedikit supaya terasa pas dengan suara
+const LYRIC_LEAD = 0.35;
+
+function activeLyricIndex(lyrics, t) {
+  let idx = -1;
+  for (let i = 0; i < lyrics.length; i += 1) {
+    if (t >= lyrics[i].time) idx = i;
+    else break;
+  }
+  return idx;
 }
 
 const INSTRUMENTAL_TITLE = /\b(instrumental|karaoke|inst\.?)\b/i;
@@ -611,7 +651,8 @@ function normalizeApiPayload(raw) {
   const songs = songsRaw
     .map((item, idx) => {
       const vid = item.videoId || item.id || `track-${idx}`;
-      const sec = Number(item.durationSec ?? item.duration_seconds ?? 180) || 180;
+      const rawSec = Number(item.durationSec ?? item.duration_seconds);
+      const sec = rawSec > 0 ? rawSec : 180;
       const artistName = Array.isArray(item.artists)
         ? item.artists.map((a) => a.name || a).join(', ')
         : (item.artist || 'YouTube Music Artist');
@@ -631,6 +672,7 @@ function normalizeApiPayload(raw) {
         artist: artistName,
         album: albumName,
         durationSec: sec,
+        durationGuess: !(rawSec > 0),
         durationLabel: item.durationLabel || item.duration || formatDuration(sec),
         cover: thumb,
         lyrics: Array.isArray(item.lyrics) ? item.lyrics : null,
@@ -756,6 +798,7 @@ function slimTrack(t) {
     artist: t.artist,
     album: t.album,
     durationSec: t.durationSec,
+    durationGuess: t.durationGuess,
     durationLabel: t.durationLabel,
     cover: t.cover,
     lyrics: null,
@@ -1355,7 +1398,7 @@ function askBackgroundPermission() {
   return true;
 }
 
-const BACKUP_KEYS = ['spideyfy-playlists', 'spideyfy-prefs', 'spideyfy-history', 'spideyfy-stats', 'spideyfy-lyr-offset'];
+const BACKUP_KEYS = ['spideyfy-playlists', 'spideyfy-prefs', 'spideyfy-history', 'spideyfy-stats', 'spideyfy-lyr-offset', 'spideyfy-lyr-pick', 'spideyfy-queue'];
 
 function BackupSection({ suit }) {
   const [text, setText] = useState('');
@@ -1716,6 +1759,21 @@ export default function MusicPlayer() {
     }
   });
   const [pickerTrack, setPickerTrack] = useState(null);
+  // Antrean buatan sendiri (lagu yang diputar lebih dulu sebelum lanjut ke daftar biasa)
+  const [userQueue, setUserQueue] = useState(() => {
+    const q = readSaved('spideyfy-queue', []);
+    return Array.isArray(q) ? q.filter((t) => t && t.id && t.videoId).slice(0, 100) : [];
+  });
+  const userQueueRef = useRef([]);
+  userQueueRef.current = userQueue;
+  const ctxLastIdRef = useRef(null);
+  const [showQueue, setShowQueue] = useState(false);
+  const [queueToast, setQueueToast] = useState('');
+  const queueToastTimer = useRef(null);
+  // Pilihan versi lirik
+  const [lyricCands, setLyricCands] = useState([]);
+  const [lyricCurId, setLyricCurId] = useState(null);
+  const [showLyricPick, setShowLyricPick] = useState(false);
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [openPlaylistId, setOpenPlaylistId] = useState(null);
   const queueRef = useRef(null);
@@ -2031,6 +2089,28 @@ export default function MusicPlayer() {
     return () => clearInterval(interval);
   }, [isPlaying, playbackMode, duration]);
 
+  // Pilih versi lirik lain untuk lagu ini (disimpan per lagu)
+  const chooseLyricCand = (c) => {
+    const id = currentTrack && currentTrack.id;
+    if (!id) return;
+    const lines = c.syncedLyrics ? parseLrcText(c.syncedLyrics) : buildPlainLyrics(c.plainLyrics);
+    if (!lines.length) return;
+    const picks = readSaved('spideyfy-lyr-pick', {}) || {};
+    picks[id] = c.id;
+    writeSaved('spideyfy-lyr-pick', picks);
+    const offs = readSaved('spideyfy-lyr-offset', {}) || {};
+    delete offs[id];
+    writeSaved('spideyfy-lyr-offset', offs);
+    const synced = !!c.syncedLyrics;
+    setLyrics(lines);
+    setLyricsSynced(synced);
+    setLyricOffset(0);
+    setLyricCurId(c.id);
+    setLyricsSource(synced ? 'Pilihanmu' : 'Lirik (tanpa sinkron)');
+    LYRICS_CACHE.set(id, { kind: synced ? 'synced' : 'plain', lines, source: synced ? 'Pilihanmu' : 'Lirik (tanpa sinkron)', itemId: c.id, cands: lyricCands });
+    setShowLyricPick(false);
+  };
+
   // Geser sinkron lirik lagu ini (disimpan per lagu)
   const adjustLyricOffset = (delta) => {
     const id = currentTrack && currentTrack.id;
@@ -2044,23 +2124,29 @@ export default function MusicPlayer() {
     setLyrics((prev) => prev.map((l) => ({ ...l, time: Math.max(0, (Number(l.time) || 0) + delta) })));
   };
 
-  // Compute active lyric line index based on currentTime
+  // Baris lirik aktif saat lagu DIJEDA / digeser (waktu dari state)
   useEffect(() => {
     if (!lyrics.length || !lyricsSynced) {
       setActiveLineIndex(-1);
       return;
     }
-    let idx = -1;
-    const t = currentTime;
-    for (let i = 0; i < lyrics.length; i += 1) {
-      if (t >= lyrics[i].time) {
-        idx = i;
-      } else {
-        break;
+    if (isPlaying) return; // saat diputar, dipegang poll cepat di bawah
+    setActiveLineIndex(activeLyricIndex(lyrics, currentTime + LYRIC_LEAD));
+  }, [currentTime, lyrics, lyricsSynced, isPlaying]);
+
+  // Poll cepat (100 ms) khusus lirik: baca waktu langsung dari pemutar, tanpa menunggu render ulang
+  useEffect(() => {
+    if (!isPlaying || !lyrics.length || !lyricsSynced) return undefined;
+    const iv = setInterval(() => {
+      let t = currentTimeRef.current;
+      const pl = ytPlayerRef.current;
+      if (!scrubbingRef.current && pl && typeof pl.getCurrentTime === 'function') {
+        t = Number(pl.getCurrentTime()) || t;
       }
-    }
-    setActiveLineIndex(idx);
-  }, [currentTime, lyrics, lyricsSynced]);
+      setActiveLineIndex(activeLyricIndex(lyrics, t + LYRIC_LEAD));
+    }, 100);
+    return () => clearInterval(iv);
+  }, [isPlaying, lyrics, lyricsSynced]);
 
   // Smooth auto-scroll active lyric line into view
   useEffect(() => {
@@ -2088,6 +2174,8 @@ export default function MusicPlayer() {
     setLyrics([]);
     setLyricsSynced(true);
     setLyricOffset(0);
+    setLyricCands([]);
+    setLyricCurId(null);
 
     // Judul menyebut instrumental/karaoke -> tidak ada lirik
     if (INSTRUMENTAL_TITLE.test(String(track.title || ''))) {
@@ -2095,77 +2183,169 @@ export default function MusicPlayer() {
       return;
     }
 
+    const applyResult = (res) => {
+      const off = Number((readSaved('spideyfy-lyr-offset', {}) || {})[track.id]) || 0;
+      if (res.kind === 'synced') {
+        setLyrics(res.lines.map((l) => ({ ...l, time: Math.max(0, l.time + off) })));
+        setLyricsSynced(true);
+        setLyricOffset(off);
+      } else if (res.kind === 'plain') {
+        setLyrics(res.lines);
+        setLyricsSynced(false);
+      }
+      setLyricsSource(res.source);
+      setLyricCands(res.cands || []);
+      setLyricCurId(res.itemId != null ? res.itemId : null);
+    };
+    const waitPlayerDuration = async (tr, ms) => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < ms) {
+        const pl = ytPlayerRef.current;
+        try {
+          if (pl && typeof pl.getDuration === 'function') {
+            const vd = typeof pl.getVideoData === 'function' ? pl.getVideoData() : null;
+            const d = Number(pl.getDuration()) || 0;
+            if (d > 30 && vd && (vd.video_id === tr.videoId || vd.video_id === tr.origVideoId)) return d;
+          }
+        } catch {
+          // abaikan
+        }
+        await new Promise((r) => setTimeout(r, 250));
+        if (isStale()) return 0;
+      }
+      return 0;
+    };
+
+    const cached = LYRICS_CACHE.get(track.id);
+    if (cached) {
+      applyResult(cached);
+      return;
+    }
+
     setLyricsSource('Searching LRCLIB...');
     try {
-      const variants = titleVariants(track.title);
+      const variants = titleVariants(track.title, track.artist);
       const firstArtist = firstArtistOf(track.artist);
-      const durSec = Number(track.durationSec) || 0;
-      if (variants.length && durSec > 0 && durSec <= 900) {
+      let durSec = Number(track.durationSec) || 0;
+      if (track.durationGuess || !(durSec > 0)) {
+        // Durasi dari server cuma tebakan: tunggu durasi asli dari pemutar supaya lirik versi yang benar terpilih
+        const real = await waitPlayerDuration(track, 3500);
+        if (isStale()) return;
+        durSec = real;
+      }
+      if (variants.length) {
         const base = 'https://lrclib.net/api';
         const getJson = async (url) => {
-          const ctl = new AbortController();
-          const to = setTimeout(() => ctl.abort(), 8000);
-          try {
-            const r = await fetch(url, { signal: ctl.signal });
-            return r.ok ? await r.json() : null;
-          } catch {
-            return null;
-          } finally {
-            clearTimeout(to);
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            const ctl = new AbortController();
+            const to = setTimeout(() => ctl.abort(), 5000);
+            try {
+              const r = await fetch(url, { signal: ctl.signal });
+              if (r.status === 404) return null;
+              if (r.ok) return await r.json();
+            } catch {
+              // coba sekali lagi
+            } finally {
+              clearTimeout(to);
+            }
+            await new Promise((res) => setTimeout(res, 700));
+            if (isStale()) return null;
           }
+          return null;
         };
+        const art = firstArtist ? `&artist_name=${encodeURIComponent(firstArtist)}` : '';
         const urls = [];
-        variants.slice(0, 2).forEach((v) => {
-          urls.push(`${base}/get?track_name=${encodeURIComponent(v)}&artist_name=${encodeURIComponent(firstArtist)}&duration=${Math.round(durSec)}`);
-          urls.push(`${base}/search?track_name=${encodeURIComponent(v)}&artist_name=${encodeURIComponent(firstArtist)}`);
+        variants.slice(0, 3).forEach((v, i) => {
+          if (art && durSec > 0 && i < 2) urls.push(`${base}/get?track_name=${encodeURIComponent(v)}${art}&duration=${Math.round(durSec)}`);
+          urls.push(`${base}/search?track_name=${encodeURIComponent(v)}${art}`);
         });
-        urls.push(`${base}/search?q=${encodeURIComponent(`${variants[variants.length - 1]} ${firstArtist}`)}`);
-        const results = await Promise.all(urls.map(getJson));
-        if (isStale()) return;
+        urls.push(`${base}/search?q=${encodeURIComponent(`${variants[variants.length - 1]} ${firstArtist}`.trim())}`);
+        urls.push(`${base}/search?q=${encodeURIComponent(variants[0])}`);
 
+        const pool = [];
         const seen = new Set();
-        const scored = [];
-        results.forEach((raw) => {
+        const addItems = (raw) => {
           const arr = Array.isArray(raw) ? raw : raw && typeof raw === 'object' ? [raw] : [];
           arr.forEach((it) => {
             if (!it) return;
             const key = it.id != null ? it.id : `${it.trackName}-${it.duration}`;
             if (seen.has(key)) return;
             seen.add(key);
-            const sc = lyricsScore(it, track, variants, durSec);
-            if (sc >= 0) scored.push({ it, sc });
+            pool.push(it);
+          });
+        };
+        const rank = (tol, relaxed) =>
+          pool
+            .map((it) => ({ it, sc: lyricsScore(it, track, variants, durSec, tol, relaxed) }))
+            .filter((x) => x.sc >= 0)
+            .sort((x, y) => y.sc - x.sc);
+
+        // Tampil secepat mungkin: begitu ada lirik tersinkron yang pas sekali, langsung dipakai
+        await new Promise((resolve) => {
+          let pending = urls.length;
+          urls.forEach((u) => {
+            getJson(u).then((raw) => {
+              addItems(raw);
+              pending -= 1;
+              const best = rank(3, false)[0];
+              if ((best && best.sc >= 100 && best.it.syncedLyrics) || pending === 0) resolve();
+            });
           });
         });
-        scored.sort((x, y) => y.sc - x.sc);
-        const valid = scored.map((x) => x.it);
+        if (isStale()) return;
+
+        const cands = rank(10, true)
+          .map((x) => x.it)
+          .filter((i) => (i.syncedLyrics || i.plainLyrics) && !i.instrumental)
+          .slice(0, 6)
+          .map((i) => ({
+            id: i.id,
+            trackName: i.trackName || i.name,
+            artistName: i.artistName,
+            duration: i.duration,
+            synced: !!i.syncedLyrics,
+            syncedLyrics: i.syncedLyrics || '',
+            plainLyrics: i.plainLyrics || '',
+          }));
+        const pickedId = (readSaved('spideyfy-lyr-pick', {}) || {})[track.id];
         const wantTags = versionTags(track.title).join('|');
         const otherVersion = (it) => versionTags(it.trackName || it.name).join('|') !== wantTags;
-        const savedOff = Number((readSaved('spideyfy-lyr-offset', {}) || {})[track.id]) || 0;
-
-        const syncedItem = valid.find((i) => i.syncedLyrics && !i.instrumental);
-        if (syncedItem) {
-          const parsed = parseLrcText(syncedItem.syncedLyrics).map((l) => ({ ...l, time: Math.max(0, l.time + savedOff) }));
-          if (parsed.length) {
-            setLyrics(parsed);
-            setLyricsSynced(true);
-            setLyricOffset(savedOff);
-            setLyricsSource(otherVersion(syncedItem) ? 'LRCLIB (versi lain, bisa kurang pas)' : 'LRCLIB Synced');
-            return;
+        const pick = (tol, relaxed) => {
+          const valid = rank(tol, relaxed).map((x) => x.it);
+          if (pickedId != null) {
+            // Versi lirik yang pernah kamu pilih sendiri
+            const pref = pool.find((i) => i.id === pickedId && (i.syncedLyrics || i.plainLyrics));
+            if (pref) {
+              const lines = pref.syncedLyrics ? parseLrcText(pref.syncedLyrics) : buildPlainLyrics(pref.plainLyrics);
+              if (lines.length) return { kind: pref.syncedLyrics ? 'synced' : 'plain', lines, source: 'Pilihanmu', itemId: pref.id };
+            }
           }
-        }
-        const plainItem = valid.find((i) => i.plainLyrics && !i.instrumental);
-        if (plainItem) {
-          // Tanpa timestamp: tampil apa adanya, tidak berpura-pura tersinkron
-          const lines = buildPlainLyrics(plainItem.plainLyrics);
-          if (lines.length) {
-            setLyrics(lines);
-            setLyricsSynced(false);
-            setLyricsSource('Lirik (tanpa sinkron)');
-            return;
+          const synced = valid.find((i) => i.syncedLyrics && !i.instrumental);
+          if (synced) {
+            const lines = parseLrcText(synced.syncedLyrics);
+            if (lines.length) {
+              return { kind: 'synced', lines, itemId: synced.id, source: otherVersion(synced) ? 'LRCLIB (versi lain, bisa kurang pas)' : 'LRCLIB Synced' };
+            }
           }
+          const plain = valid.find((i) => i.plainLyrics && !i.instrumental);
+          if (plain) {
+            // Tanpa timestamp: tampil apa adanya, tidak berpura-pura tersinkron
+            const lines = buildPlainLyrics(plain.plainLyrics);
+            if (lines.length) return { kind: 'plain', lines, itemId: plain.id, source: 'Lirik (tanpa sinkron)' };
+          }
+          if (valid.some((i) => i.instrumental)) return { kind: 'instrumental', source: 'Instrumental' };
+          return null;
+        };
+        let res = pick(3, false);
+        if (!res && durSec > 0) {
+          // Tidak ada yang durasinya pas: coba yang agak beda (lirik tetap bisa dikoreksi pakai tombol sinkron)
+          res = pick(10, true);
+          if (res && res.kind === 'synced') res.source = 'LRCLIB (durasi beda, bisa kurang pas)';
         }
-        if (valid.some((i) => i.instrumental)) {
-          setLyricsSource('Instrumental');
+        if (res) {
+          res.cands = cands;
+          LYRICS_CACHE.set(track.id, res);
+          applyResult(res);
           return;
         }
       }
@@ -2482,10 +2662,65 @@ export default function MusicPlayer() {
     restorePlayerVolume();
   };
 
+  useEffect(() => {
+    writeSaved('spideyfy-queue', userQueue.slice(0, 100));
+  }, [userQueue]);
+
+  const flashQueue = (msg) => {
+    setQueueToast(msg);
+    clearTimeout(queueToastTimer.current);
+    queueToastTimer.current = setTimeout(() => setQueueToast(''), 1800);
+  };
+  const addToQueue = (track, next = false) => {
+    if (!track || !track.id) return;
+    const t = slimTrack(track);
+    setUserQueue((q) => {
+      const rest = q.filter((x) => x.id !== t.id);
+      return next ? [t, ...rest] : [...rest, t];
+    });
+    flashQueue(next ? 'Diputar berikutnya' : 'Ditambahkan ke antrean');
+    navigator.vibrate?.(10);
+  };
+  const removeFromQueue = (id) => setUserQueue((q) => q.filter((x) => x.id !== id));
+  const moveInQueue = (id, dir) =>
+    setUserQueue((q) => {
+      const i = q.findIndex((x) => x.id === id);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= q.length) return q;
+      const c = q.slice();
+      [c[i], c[j]] = [c[j], c[i]];
+      return c;
+    });
+  const clearQueue = () => setUserQueue([]);
+  const playQueueItem = (id) => {
+    const item = userQueueRef.current.find((x) => x.id === id);
+    if (!item) return;
+    setUserQueue((q) => q.filter((x) => x.id !== id));
+    handleSelectTrack(item, true, queueRef.current);
+  };
+
   const handleStepTrack = useCallback(
     (delta) => {
+      // Antrean buatan sendiri didahulukan saat lanjut ke lagu berikutnya
+      if (delta > 0 && userQueueRef.current.length) {
+        const [nxt, ...rest] = userQueueRef.current;
+        userQueueRef.current = rest;
+        setUserQueue(rest);
+        if (nxt.id === currentTrack?.id) {
+          const plq = ytPlayerRef.current;
+          setCurrentTime(0);
+          if (plq && typeof plq.seekTo === 'function') plq.seekTo(0, true);
+          if (plq && typeof plq.playVideo === 'function') plq.playVideo();
+          isPlayingRef.current = true;
+          setIsPlaying(true);
+        } else {
+          handleSelectTrack(nxt, true, queueRef.current);
+        }
+        return;
+      }
       const list = queueRef.current && queueRef.current.length ? queueRef.current : catalog.songs;
       if (!list.length) return;
+      if (list.some((t) => t.id === currentTrack?.id)) ctxLastIdRef.current = currentTrack.id;
       if (shuffleRef.current && list.length > 1) {
         if (delta < 0) {
           // kembali ke lagu yang tadi diputar (riwayat acak)
@@ -2514,7 +2749,9 @@ export default function MusicPlayer() {
           }
         }
       }
-      const idx = list.findIndex((t) => t.id === currentTrack?.id);
+      let idx = list.findIndex((t) => t.id === currentTrack?.id);
+      // sedang memutar lagu dari antrean: lanjut dari posisi terakhir di daftar asal
+      if (idx === -1 && ctxLastIdRef.current) idx = list.findIndex((t) => t.id === ctxLastIdRef.current);
       const nextIdx = idx === -1 ? 0 : (idx + delta + list.length) % list.length;
       handleSelectTrack(list[nextIdx], true, queueRef.current);
     },
@@ -2541,7 +2778,7 @@ export default function MusicPlayer() {
         if (pl && typeof pl.playVideo === 'function') pl.playVideo();
         return;
       }
-      if (!fromError && mode === 'off' && !shuffleRef.current) {
+      if (!fromError && mode === 'off' && !shuffleRef.current && !userQueueRef.current.length) {
         const list = queueRef.current && queueRef.current.length ? queueRef.current : catalog.songs;
         const idx = list.findIndex((t) => t.id === currentTrack?.id);
         if (list.length && idx === list.length - 1) {
@@ -3748,6 +3985,17 @@ export default function MusicPlayer() {
                     >
                       <ListPlus className="w-5 h-5" />
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowQueue(true)}
+                      aria-label="Antrean"
+                      className="relative p-2.5 rounded-full bg-white/10 text-neutral-200 active:scale-90 transition"
+                    >
+                      <ListMusic className="w-5 h-5" />
+                      {userQueue.length > 0 && (
+                        <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full text-[10px] font-black flex items-center justify-center text-white" style={{ background: suit.primary }}>{userQueue.length}</span>
+                      )}
+                    </button>
                   </div>
                 </div>
 
@@ -4099,6 +4347,38 @@ export default function MusicPlayer() {
               <span className="text-neutral-500">{'\u2212'} lebih cepat, + lebih lambat</span>
             </div>
           )}
+          {lyricCands.length > 1 && (
+            <div className="px-4 pb-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowLyricPick((v) => !v)}
+                className="mx-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/10 text-[11px] font-bold text-white active:scale-95 transition"
+              >
+                <Mic2 className="w-3.5 h-3.5" /> Lirik tidak pas? Ganti versi ({lyricCands.length})
+              </button>
+              {showLyricPick && (
+                <div className="mt-2 max-h-44 overflow-y-auto rounded-2xl bg-white/[0.07] p-1.5 space-y-1">
+                  {lyricCands.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => chooseLyricCand(c)}
+                      className="w-full flex items-center justify-between gap-2 rounded-xl px-3 py-2 text-left active:scale-[0.99] transition"
+                      style={{ background: c.id === lyricCurId ? `${suit.primary}55` : 'transparent' }}
+                    >
+                      <span className="min-w-0">
+                        <span className="block text-xs font-bold text-white truncate">{c.trackName}</span>
+                        <span className="block text-[10px] text-neutral-400 truncate">
+                          {c.artistName} · {formatDuration(c.duration || 0)} · {c.synced ? 'tersinkron' : 'tanpa sinkron'}
+                        </span>
+                      </span>
+                      {c.id === lyricCurId && <span className="text-[10px] font-black shrink-0" style={{ color: suit.primary }}>dipakai</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           <div
             ref={fullLyricsRef}
@@ -4165,6 +4445,13 @@ export default function MusicPlayer() {
             </div>
             <div className="flex items-center justify-between text-xs text-neutral-300 tabular-nums">
               <span>{formatDuration(currentTime)}</span>
+              <button
+                type="button"
+                onClick={() => setShowQueue(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/10 text-[11px] font-bold text-white active:scale-95 transition"
+              >
+                <ListMusic className="w-3.5 h-3.5" /> Antrean{userQueue.length > 0 ? ` (${userQueue.length})` : ''}
+              </button>
               <span>{formatDuration(duration)}</span>
             </div>
 
@@ -4206,6 +4493,84 @@ export default function MusicPlayer() {
         document.body
       )}
 
+      {queueToast && (
+        <div
+          className="fixed left-1/2 -translate-x-1/2 px-4 py-2 rounded-full text-xs font-bold text-white shadow-lg"
+          style={{ zIndex: 290, bottom: 'calc(env(safe-area-inset-bottom, 0px) + 96px)', background: suit.primary, animation: 'rcRise .25s both' }}
+        >
+          {queueToast}
+        </div>
+      )}
+
+      {showQueue &&
+        createPortal(
+          <div className="fixed inset-0 flex items-end sm:items-center justify-center bg-black/70" style={{ zIndex: 280 }} onClick={() => setShowQueue(false)}>
+            <div
+              className="w-full sm:max-w-sm max-h-[82dvh] flex flex-col rounded-t-3xl sm:rounded-3xl bg-[#14141b] border border-white/15"
+              style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between gap-3 p-4 pb-2 shrink-0">
+                <div>
+                  <div className="text-sm font-extrabold text-white">Antrean</div>
+                  <div className="text-[11px] text-neutral-400">{userQueue.length ? `${userQueue.length} lagu berikutnya` : 'Masih kosong'}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {userQueue.length > 0 && (
+                    <button type="button" onClick={clearQueue} className="px-3 py-1.5 rounded-full bg-white/10 text-xs font-bold text-white active:scale-95 transition">Bersihkan</button>
+                  )}
+                  <button type="button" onClick={() => setShowQueue(false)} aria-label="Tutup antrean" className="p-2 rounded-full bg-white/10 text-white">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+              <div className="overflow-y-auto px-4 pb-4 space-y-2">
+                {currentTrack && (
+                  <>
+                    <div className="text-[11px] font-black uppercase tracking-widest text-neutral-400">Sedang diputar</div>
+                    <div className="flex items-center gap-2.5 rounded-xl p-2" style={{ background: `${suit.primary}26`, border: `1px solid ${suit.primary}66` }}>
+                      <CoverImg src={currentTrack.cover} videoId={currentTrack.videoId || currentTrack.id} alt={currentTrack.title} className="w-10 h-10 rounded-lg object-cover shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-white truncate">{currentTrack.title}</div>
+                        <div className="text-[11px] text-neutral-300 truncate">{currentTrack.artist}</div>
+                      </div>
+                    </div>
+                  </>
+                )}
+                <div className="text-[11px] font-black uppercase tracking-widest text-neutral-400 pt-1">Berikutnya dari antrean</div>
+                {userQueue.length === 0 && (
+                  <p className="text-xs text-neutral-400">Belum ada lagu. Tekan ikon tambah di lagu mana pun, lalu pilih "Putar berikutnya" atau "Tambah ke antrean".</p>
+                )}
+                {userQueue.map((t, i) => (
+                  <div key={t.id} className="flex items-center gap-1.5 rounded-xl bg-white/[0.06] p-2">
+                    <button
+                      type="button"
+                      onClick={() => { playQueueItem(t.id); setShowQueue(false); }}
+                      className="flex items-center gap-2.5 min-w-0 flex-1 text-left"
+                    >
+                      <CoverImg src={t.cover} videoId={t.videoId || t.id} alt={t.title} className="w-10 h-10 rounded-lg object-cover shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-white truncate">{t.title}</div>
+                        <div className="text-[11px] text-neutral-400 truncate">{t.artist}</div>
+                      </div>
+                    </button>
+                    <button type="button" onClick={() => moveInQueue(t.id, -1)} disabled={i === 0} aria-label="Naikkan" className="p-2 rounded-full bg-white/10 text-white disabled:opacity-30 active:scale-90 transition">
+                      <ChevronRight className="w-4 h-4" style={{ transform: 'rotate(-90deg)' }} />
+                    </button>
+                    <button type="button" onClick={() => moveInQueue(t.id, 1)} disabled={i === userQueue.length - 1} aria-label="Turunkan" className="p-2 rounded-full bg-white/10 text-white disabled:opacity-30 active:scale-90 transition">
+                      <ChevronRight className="w-4 h-4" style={{ transform: 'rotate(90deg)' }} />
+                    </button>
+                    <button type="button" onClick={() => removeFromQueue(t.id)} aria-label="Hapus dari antrean" className="p-2 rounded-full bg-white/10 text-white active:scale-90 transition">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
       {/* Pilih playlist untuk menambah lagu */}
       {pickerTrack && (
         <div
@@ -4218,7 +4583,7 @@ export default function MusicPlayer() {
           >
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <div className="text-sm font-extrabold text-white">Tambah ke playlist</div>
+                <div className="text-sm font-extrabold text-white">Tambahkan lagu</div>
                 <div className="text-[11px] text-neutral-400 truncate">{pickerTrack.title}</div>
               </div>
               <button
@@ -4230,6 +4595,23 @@ export default function MusicPlayer() {
                 <X className="w-4 h-4" />
               </button>
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => { addToQueue(pickerTrack, true); setPickerTrack(null); }}
+                className="rounded-xl py-2.5 text-xs font-bold text-white bg-white/10 active:scale-95 transition"
+              >
+                Putar berikutnya
+              </button>
+              <button
+                type="button"
+                onClick={() => { addToQueue(pickerTrack, false); setPickerTrack(null); }}
+                className="rounded-xl py-2.5 text-xs font-bold text-white bg-white/10 active:scale-95 transition"
+              >
+                Tambah ke antrean
+              </button>
+            </div>
+            <div className="text-[11px] font-black uppercase tracking-widest text-neutral-400 pt-1">Atau simpan ke playlist</div>
             <div className="flex gap-2">
               <input
                 value={newPlaylistName}
