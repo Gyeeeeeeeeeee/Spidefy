@@ -226,6 +226,11 @@ public class IslandOverlay {
     }
   }
 
+  /** Posisi untuk mencari baris lirik: dimajukan sedikit supaya terasa pas dengan suara. */
+  public double lyricPos() {
+    return currentPos() + 0.35;
+  }
+
   public double currentPos() {
     double p = posSec;
     if (playing) p += (SystemClock.elapsedRealtime() - posStamp) / 1000.0;
@@ -331,7 +336,7 @@ public class IslandOverlay {
     double[] ts = lyricTimes;
     String[] tx = lyricTexts;
     if (ts == null || tx == null || ts.length == 0 || ts.length != tx.length) return null;
-    double pos = currentPos();
+    double pos = lyricPos();
     int idx = -1;
     for (int i = 0; i < ts.length; i++) {
       if (pos >= ts[i]) idx = i;
@@ -352,7 +357,7 @@ public class IslandOverlay {
     double[] ts = lyricTimes;
     String[] tx = lyricTexts;
     if (ts == null || tx == null || ts.length == 0 || ts.length != tx.length) return null;
-    double pos = currentPos();
+    double pos = lyricPos();
     int idx = -1;
     for (int i = 0; i < ts.length; i++) {
       if (pos >= ts[i]) idx = i;

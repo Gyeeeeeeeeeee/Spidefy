@@ -263,7 +263,7 @@ public class KineticLyricsView extends View {
 
     double[] ts = st.lockTimes();
     String[] tx = st.lockTexts();
-    double pos = st.currentPos();
+    double pos = st.lyricPos();
     boolean synced = ts != null && tx != null && ts.length > 0 && ts.length == tx.length;
 
     String key;
