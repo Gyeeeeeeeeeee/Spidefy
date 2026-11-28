@@ -614,6 +614,8 @@ function activeLyricIndex(lyrics, t) {
     if (t >= lyrics[i].time) idx = i;
     else break;
   }
+  // Setelah baris terakhir lewat 30 dtk, jangan terus menyorot baris itu (lirik sudah habis / tidak lengkap)
+  if (idx >= 0 && idx === lyrics.length - 1 && t - lyrics[idx].time > 30) return -1;
   return idx;
 }
 
@@ -658,7 +660,7 @@ function fillMissingLines(lines, plainText, durSec) {
     if (m >= 0) anchors.push(pj);
   });
   // Terlalu banyak yang tidak cocok = teks polos beda versi / beda ejaan, jangan menebak
-  if (anchors.length < plain.length * 0.6 || anchors.length < lines.length * 0.7) return lines;
+  if (anchors.length < lines.length * 0.7) return lines;
 
   const w = (t) => t.length + 12;
   const extra = [];
@@ -2283,19 +2285,24 @@ export default function MusicPlayer() {
       setLyricCands(res.cands || []);
       setLyricCurId(res.itemId != null ? res.itemId : null);
     };
+    const readPlayerDuration = (tr) => {
+      const pl = ytPlayerRef.current;
+      try {
+        if (pl && typeof pl.getDuration === 'function') {
+          const vd = typeof pl.getVideoData === 'function' ? pl.getVideoData() : null;
+          const d = Number(pl.getDuration()) || 0;
+          if (d > 30 && (!vd || !vd.video_id || vd.video_id === tr.videoId || vd.video_id === tr.origVideoId)) return d;
+        }
+      } catch {
+        // abaikan
+      }
+      return 0;
+    };
     const waitPlayerDuration = async (tr, ms) => {
       const t0 = Date.now();
       while (Date.now() - t0 < ms) {
-        const pl = ytPlayerRef.current;
-        try {
-          if (pl && typeof pl.getDuration === 'function') {
-            const vd = typeof pl.getVideoData === 'function' ? pl.getVideoData() : null;
-            const d = Number(pl.getDuration()) || 0;
-            if (d > 30 && vd && (vd.video_id === tr.videoId || vd.video_id === tr.origVideoId)) return d;
-          }
-        } catch {
-          // abaikan
-        }
+        const d = readPlayerDuration(tr);
+        if (d > 0) return d;
         await new Promise((r) => setTimeout(r, 250));
         if (isStale()) return 0;
       }
@@ -2312,12 +2319,15 @@ export default function MusicPlayer() {
     try {
       const variants = titleVariants(track.title, track.artist);
       const firstArtist = firstArtistOf(track.artist);
-      let durSec = Number(track.durationSec) || 0;
+      const rawTitle = String(track.title || '').replace(/\s+/g, ' ').trim();
+      // Durasi asli dari pemutar TIDAK ditunggu (itu yang bikin lirik telat muncul): cari lirik langsung,
+      // durasi asli dikejar paralel lalu dipakai untuk memastikan versi yang dipilih sudah benar.
+      let durSec = track.durationGuess ? 0 : Number(track.durationSec) || 0;
+      let realPromise = null;
       if (track.durationGuess || !(durSec > 0)) {
-        // Durasi dari server cuma tebakan: tunggu durasi asli dari pemutar supaya lirik versi yang benar terpilih
-        const real = await waitPlayerDuration(track, 3500);
-        if (isStale()) return;
-        durSec = real;
+        const nowReal = readPlayerDuration(track);
+        if (nowReal > 0) durSec = nowReal;
+        else realPromise = waitPlayerDuration(track, 10000);
       }
       if (variants.length) {
         const base = 'https://lrclib.net/api';
@@ -2341,6 +2351,13 @@ export default function MusicPlayer() {
         };
         const art = firstArtist ? `&artist_name=${encodeURIComponent(firstArtist)}` : '';
         const urls = [];
+        // Judul LENGKAP (dengan "(10 Minute Version)", "(Acoustic)", dst.) dicari dulu: kalau hanya judul
+        // intinya, versi khusus sering tidak ikut ke hasil pencarian karena tertimbun puluhan versi lain.
+        if (rawTitle && rawTitle !== variants[0]) {
+          if (art && durSec > 0) urls.push(`${base}/get?track_name=${encodeURIComponent(rawTitle)}${art}&duration=${Math.round(durSec)}`);
+          urls.push(`${base}/search?track_name=${encodeURIComponent(rawTitle)}${art}`);
+          urls.push(`${base}/search?q=${encodeURIComponent(`${rawTitle} ${firstArtist}`.trim())}`);
+        }
         variants.slice(0, 3).forEach((v, i) => {
           if (art && durSec > 0 && i < 2) urls.push(`${base}/get?track_name=${encodeURIComponent(v)}${art}&duration=${Math.round(durSec)}`);
           urls.push(`${base}/search?track_name=${encodeURIComponent(v)}${art}`);
@@ -2366,43 +2383,65 @@ export default function MusicPlayer() {
             .filter((x) => x.sc >= 0)
             .sort((x, y) => y.sc - x.sc);
 
-        // Tampil secepat mungkin: begitu ada lirik tersinkron yang pas sekali, langsung dipakai
-        await new Promise((resolve) => {
-          let pending = urls.length;
-          urls.forEach((u) => {
-            getJson(u).then((raw) => {
-              addItems(raw);
-              pending -= 1;
-              const best = rank(3, false)[0];
-              if ((best && best.sc >= 100 && best.it.syncedLyrics) || pending === 0) resolve();
-            });
-          });
-        });
+        // Tampil secepat mungkin: begitu ada lirik tersinkron yang pas, langsung dipakai
+        const reqs = urls.map((u) =>
+          getJson(u).then((raw) => {
+            addItems(raw);
+          })
+        );
+        const allDone = Promise.all(reqs);
+        await Promise.race([
+          allDone,
+          new Promise((resolve) => {
+            reqs.forEach((rq) =>
+              rq.then(() => {
+                const best = rank(3, false)[0];
+                if (best && best.sc >= 85 && best.it.syncedLyrics) resolve();
+              })
+            );
+          }),
+        ]);
         if (isStale()) return;
 
-        const cands = rank(10, true)
-          .map((x) => x.it)
-          .filter((i) => (i.syncedLyrics || i.plainLyrics) && !i.instrumental)
-          .slice(0, 6)
-          .map((i) => ({
-            id: i.id,
-            trackName: i.trackName || i.name,
-            artistName: i.artistName,
-            duration: i.duration,
-            synced: !!i.syncedLyrics,
-            syncedLyrics: i.syncedLyrics || '',
-            plainLyrics: i.plainLyrics || '',
-          }));
+        const buildCands = () =>
+          rank(10, true)
+            .map((x) => x.it)
+            .filter((i) => (i.syncedLyrics || i.plainLyrics) && !i.instrumental)
+            .slice(0, 6)
+            .map((i) => ({
+              id: i.id,
+              trackName: i.trackName || i.name,
+              artistName: i.artistName,
+              duration: i.duration,
+              synced: !!i.syncedLyrics,
+              syncedLyrics: i.syncedLyrics || '',
+              plainLyrics: i.plainLyrics || '',
+            }));
         const pickedId = (readSaved('spideyfy-lyr-pick', {}) || {})[track.id];
         const wantTags = versionTags(track.title).join('|');
         const otherVersion = (it) => versionTags(it.trackName || it.name).join('|') !== wantTags;
+        const lineCount = (t) => String(t || '').split(/\r?\n/).filter((l) => l.trim()).length;
         const pick = (tol, relaxed) => {
           const valid = rank(tol, relaxed).map((x) => x.it);
+          // Teks polos paling lengkap dari versi yang sama: dipakai menambal baris yang hilang di LRC
+          const plainFor = (it) => {
+            let best = it.plainLyrics || '';
+            let bestN = lineCount(best);
+            valid.forEach((i) => {
+              if (!i.plainLyrics || i.instrumental || otherVersion(i)) return;
+              const n = lineCount(i.plainLyrics);
+              if (n > bestN) {
+                best = i.plainLyrics;
+                bestN = n;
+              }
+            });
+            return best;
+          };
           if (pickedId != null) {
             // Versi lirik yang pernah kamu pilih sendiri
             const pref = pool.find((i) => i.id === pickedId && (i.syncedLyrics || i.plainLyrics));
             if (pref) {
-              const lines = pref.syncedLyrics ? buildSyncedLines(pref.syncedLyrics, pref.plainLyrics, durSec) : buildPlainLyrics(pref.plainLyrics);
+              const lines = pref.syncedLyrics ? buildSyncedLines(pref.syncedLyrics, plainFor(pref), durSec) : buildPlainLyrics(pref.plainLyrics);
               if (lines.length) return { kind: pref.syncedLyrics ? 'synced' : 'plain', lines, source: 'Pilihanmu', itemId: pref.id };
             }
           }
@@ -2427,7 +2466,7 @@ export default function MusicPlayer() {
             }
           }
           if (synced) {
-            const lines = buildSyncedLines(synced.syncedLyrics, synced.plainLyrics, durSec);
+            const lines = buildSyncedLines(synced.syncedLyrics, plainFor(synced), durSec);
             if (lines.length) {
               let src = otherVersion(synced) ? 'LRCLIB (versi lain, bisa kurang pas)' : 'LRCLIB Synced';
               if (incomplete) src = 'LRCLIB (mungkin tidak lengkap)';
@@ -2437,7 +2476,7 @@ export default function MusicPlayer() {
           const plain = valid.find((i) => i.plainLyrics && !i.instrumental);
           if (plain) {
             // Tanpa timestamp: tampil apa adanya, tidak berpura-pura tersinkron
-            const lines = buildPlainLyrics(plain.plainLyrics);
+            const lines = buildPlainLyrics(plainFor(plain));
             if (lines.length) {
               return {
                 kind: 'plain',
@@ -2450,16 +2489,54 @@ export default function MusicPlayer() {
           if (valid.some((i) => i.instrumental)) return { kind: 'instrumental', source: 'Instrumental' };
           return null;
         };
-        let res = pick(3, false);
-        if (!res && durSec > 0) {
-          // Tidak ada yang durasinya pas: coba yang agak beda (lirik tetap bisa dikoreksi pakai tombol sinkron)
-          res = pick(10, true);
-          if (res && res.kind === 'synced') res.source = 'LRCLIB (durasi beda, bisa kurang pas)';
+        const resolve = () => {
+          let r = pick(3, false);
+          if (!r && durSec > 0) {
+            // Tidak ada yang durasinya pas: coba yang agak beda (lirik tetap bisa dikoreksi pakai tombol sinkron)
+            r = pick(10, true);
+            if (r && r.kind === 'synced') r.source = 'LRCLIB (durasi beda, bisa kurang pas)';
+          }
+          if (!r && durSec > 0) {
+            // Terakhir: teks lirik lagu yang sama (tanpa waktu), walau versinya beda
+            const any = rank(1e9, true).map((x) => x.it).find((i) => i.plainLyrics && !i.instrumental);
+            if (any) {
+              const lines = buildPlainLyrics(any.plainLyrics);
+              if (lines.length) r = { kind: 'plain', lines, itemId: any.id, source: 'Lirik (tanpa sinkron, versi lagu beda)' };
+            }
+          }
+          if (r) r.cands = buildCands();
+          return r;
+        };
+
+        const res = resolve();
+        if (res) applyResult(res); // tampil dulu secepatnya
+
+        if (realPromise) {
+          // Durasi asli menyusul: pilih ulang dengan durasi yang benar (versi bisa berganti)
+          const real = await realPromise;
+          if (isStale()) return;
+          await allDone;
+          if (isStale()) return;
+          if (real > 0) {
+            durSec = real;
+            const res2 = resolve();
+            if (res2) {
+              LYRICS_CACHE.set(track.id, res2);
+              if (!res || res2.itemId !== res.itemId || res2.kind !== res.kind) applyResult(res2);
+              return;
+            }
+            if (res) {
+              // Lirik tebakan tadi ternyata bukan versi lagu ini
+              setLyrics([]);
+              setLyricCands([]);
+              setLyricCurId(null);
+              setLyricsSource('Tanpa lirik');
+            }
+            return;
+          }
         }
         if (res) {
-          res.cands = cands;
           LYRICS_CACHE.set(track.id, res);
-          applyResult(res);
           return;
         }
       }
@@ -4452,6 +4529,9 @@ export default function MusicPlayer() {
             </button>
           </div>
 
+          {lyrics.length > 0 && (
+            <div className="text-center text-[10px] text-neutral-500 pb-0.5 shrink-0">{lyricsSource} {'\u00B7'} {lyrics.length} baris</div>
+          )}
           {lyricsSynced && lyrics.length > 0 && (
             <div className="flex items-center justify-center gap-2 px-4 pb-1 shrink-0 text-[11px] text-neutral-300">
               <span>Sinkron</span>
