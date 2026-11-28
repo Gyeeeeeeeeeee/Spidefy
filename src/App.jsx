@@ -619,6 +619,91 @@ function activeLyricIndex(lyrics, t) {
 
 const INSTRUMENTAL_TITLE = /\b(instrumental|karaoke|inst\.?)\b/i;
 
+// ---- Validasi & penambalan lirik berwaktu ----
+const lyrKey = (x) => String(x || '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+
+// Lirik berwaktu yang sehat berakhir di dekat akhir lagu. Kalau berhenti jauh sebelum lagu selesai,
+// biasanya itu lirik versi yang lebih pendek (atau terpotong), jadi ia berhenti padahal lagu masih jalan.
+function lrcCovers(lines, durSec) {
+  if (!(durSec > 0) || !lines.length) return true;
+  const last = lines[lines.length - 1].time;
+  return last >= durSec - Math.max(35, durSec * 0.12) && last <= durSec + 3;
+}
+
+// LRC sering melewatkan beberapa baris (ad-lib, pengulangan). Teks polos dari item yang sama biasanya
+// lengkap, jadi baris yang hilang disisipkan dengan waktu perkiraan di antara dua baris yang sudah ada.
+function fillMissingLines(lines, plainText, durSec) {
+  const plain = String(plainText || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l && !/^\[[^\]]*\]$/.test(l));
+  if (lines.length < 4 || plain.length <= lines.length) return lines;
+  const sk = lines.map((l) => lyrKey(l.text));
+  const pk = plain.map(lyrKey);
+  const same = (a, b) => !!a && !!b && (a === b || (a.length > 6 && b.length > 6 && (a.includes(b) || b.includes(a))));
+  const match = new Array(plain.length).fill(-1);
+  let si = 0;
+  for (let pj = 0; pj < plain.length; pj += 1) {
+    const end = Math.min(sk.length, si + 4);
+    for (let k = si; k < end; k += 1) {
+      if (same(sk[k], pk[pj])) {
+        match[pj] = k;
+        si = k + 1;
+        break;
+      }
+    }
+  }
+  const anchors = [];
+  match.forEach((m, pj) => {
+    if (m >= 0) anchors.push(pj);
+  });
+  // Terlalu banyak yang tidak cocok = teks polos beda versi / beda ejaan, jangan menebak
+  if (anchors.length < plain.length * 0.6 || anchors.length < lines.length * 0.7) return lines;
+
+  const w = (t) => t.length + 12;
+  const extra = [];
+  for (let q = 0; q + 1 < anchors.length; q += 1) {
+    const a = anchors[q];
+    const b = anchors[q + 1];
+    const n = b - a - 1;
+    if (n <= 0 || match[b] !== match[a] + 1) continue; // hanya celah di antara dua baris yang bersebelahan
+    const ta = lines[match[a]].time;
+    const gap = lines[match[b]].time - ta;
+    if (gap / (n + 1) < 1.4) continue;
+    let total = 0;
+    for (let m = a; m < b; m += 1) total += w(plain[m]);
+    let cum = w(plain[a]);
+    for (let m = a + 1; m < b; m += 1) {
+      extra.push({ time: ta + gap * (cum / total), text: plain[m] });
+      cum += w(plain[m]);
+    }
+  }
+  // Ekor: daftar berhenti di baris terakhir yang cocok, padahal teks polos masih ada dan lagu masih panjang
+  const la = anchors[anchors.length - 1];
+  const tailN = plain.length - la - 1;
+  if (durSec > 0 && tailN >= 2 && match[la] === lines.length - 1) {
+    const tLast = lines[match[la]].time;
+    const start = tLast + 4;
+    const end = durSec - 8;
+    if (durSec - tLast > 25 && (end - start) / tailN >= 2) {
+      let total = 0;
+      for (let m = la + 1; m < plain.length; m += 1) total += w(plain[m]);
+      let cum = 0;
+      for (let m = la + 1; m < plain.length; m += 1) {
+        extra.push({ time: start + (end - start) * (cum / total), text: plain[m] });
+        cum += w(plain[m]);
+      }
+    }
+  }
+  if (!extra.length) return lines;
+  return lines.concat(extra).sort((x, y) => x.time - y.time);
+}
+
+function buildSyncedLines(syncedText, plainText, durSec) {
+  const parsed = parseLrcText(syncedText);
+  return parsed.length ? fillMissingLines(parsed, plainText, durSec) : parsed;
+}
+
 function buildPlainLyrics(plainText) {
   return String(plainText || '')
     .split(/\r?\n/)
@@ -2093,7 +2178,8 @@ export default function MusicPlayer() {
   const chooseLyricCand = (c) => {
     const id = currentTrack && currentTrack.id;
     if (!id) return;
-    const lines = c.syncedLyrics ? parseLrcText(c.syncedLyrics) : buildPlainLyrics(c.plainLyrics);
+    const dsec = Number(duration) || Number(currentTrack.durationSec) || 0;
+    const lines = c.syncedLyrics ? buildSyncedLines(c.syncedLyrics, c.plainLyrics, dsec) : buildPlainLyrics(c.plainLyrics);
     if (!lines.length) return;
     const picks = readSaved('spideyfy-lyr-pick', {}) || {};
     picks[id] = c.id;
@@ -2316,22 +2402,50 @@ export default function MusicPlayer() {
             // Versi lirik yang pernah kamu pilih sendiri
             const pref = pool.find((i) => i.id === pickedId && (i.syncedLyrics || i.plainLyrics));
             if (pref) {
-              const lines = pref.syncedLyrics ? parseLrcText(pref.syncedLyrics) : buildPlainLyrics(pref.plainLyrics);
+              const lines = pref.syncedLyrics ? buildSyncedLines(pref.syncedLyrics, pref.plainLyrics, durSec) : buildPlainLyrics(pref.plainLyrics);
               if (lines.length) return { kind: pref.syncedLyrics ? 'synced' : 'plain', lines, source: 'Pilihanmu', itemId: pref.id };
             }
           }
-          const synced = valid.find((i) => i.syncedLyrics && !i.instrumental);
+          const nearDur = (i) => !(durSec > 0 && i.duration) || Math.abs(Number(i.duration) - durSec) <= 1.5;
+          const syncedAll = valid.filter((i) => i.syncedLyrics && !i.instrumental);
+          // Versi lain (mis. acoustic vs studio) hanya dipakai bertimestamp kalau durasinya nyaris sama,
+          // kalau tidak waktunya pasti meleset
+          const syncedOk = syncedAll.filter((i) => !otherVersion(i) || nearDur(i));
+          let synced = null;
+          let incomplete = false;
+          for (const i of syncedOk) {
+            const ln = parseLrcText(i.syncedLyrics);
+            if (!ln.length) continue;
+            if (lrcCovers(ln, durSec)) {
+              synced = i;
+              incomplete = false;
+              break;
+            }
+            if (!synced) {
+              synced = i;
+              incomplete = true;
+            }
+          }
           if (synced) {
-            const lines = parseLrcText(synced.syncedLyrics);
+            const lines = buildSyncedLines(synced.syncedLyrics, synced.plainLyrics, durSec);
             if (lines.length) {
-              return { kind: 'synced', lines, itemId: synced.id, source: otherVersion(synced) ? 'LRCLIB (versi lain, bisa kurang pas)' : 'LRCLIB Synced' };
+              let src = otherVersion(synced) ? 'LRCLIB (versi lain, bisa kurang pas)' : 'LRCLIB Synced';
+              if (incomplete) src = 'LRCLIB (mungkin tidak lengkap)';
+              return { kind: 'synced', lines, itemId: synced.id, source: src };
             }
           }
           const plain = valid.find((i) => i.plainLyrics && !i.instrumental);
           if (plain) {
             // Tanpa timestamp: tampil apa adanya, tidak berpura-pura tersinkron
             const lines = buildPlainLyrics(plain.plainLyrics);
-            if (lines.length) return { kind: 'plain', lines, itemId: plain.id, source: 'Lirik (tanpa sinkron)' };
+            if (lines.length) {
+              return {
+                kind: 'plain',
+                lines,
+                itemId: plain.id,
+                source: syncedAll.length ? 'Lirik (tanpa sinkron, waktu versi ini belum ada)' : 'Lirik (tanpa sinkron)',
+              };
+            }
           }
           if (valid.some((i) => i.instrumental)) return { kind: 'instrumental', source: 'Instrumental' };
           return null;
