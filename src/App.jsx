@@ -36,6 +36,7 @@ import {
   Repeat1,
   Shuffle,
   Moon,
+  GripVertical,
 } from 'lucide-react';
 import { PlaylistLibrary, PlaylistDetail } from './PlaylistsView.jsx';
 import CoverImg from './CoverImg.jsx';
@@ -609,10 +610,17 @@ const LYRICS_CACHE = new Map();
 const LYRIC_LEAD = 0.35;
 
 function activeLyricIndex(lyrics, t) {
+  let lo = 0;
+  let hi = lyrics.length - 1;
   let idx = -1;
-  for (let i = 0; i < lyrics.length; i += 1) {
-    if (t >= lyrics[i].time) idx = i;
-    else break;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (t >= lyrics[mid].time) {
+      idx = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
   }
   // Setelah baris terakhir lewat 30 dtk, jangan terus menyorot baris itu (lirik sudah habis / tidak lengkap)
   if (idx >= 0 && idx === lyrics.length - 1 && t - lyrics[idx].time > 30) return -1;
@@ -712,6 +720,106 @@ function buildPlainLyrics(plainText) {
     .map((l) => l.trim())
     .filter(Boolean)
     .map((text, idx) => ({ time: idx * 5, text }));
+}
+
+// ---- Preview reff (saat menambah lagu ke playlist) ----
+const PREVIEW_LEN = 22; // detik
+const CHORUS_CACHE = new Map();
+
+function trackDurationSec(track) {
+  const d = Number(track && track.durationSec) || 0;
+  if (d > 0) return d;
+  const m = String((track && track.durationLabel) || '').match(/^(\d+):(\d{2})$/);
+  return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : 0;
+}
+
+// Cari awal reff dari lirik berwaktu: blok baris berurutan yang paling sering diulang
+function findChorusStart(lines, dur) {
+  if (!Array.isArray(lines) || lines.length < 8) return null;
+  const keys = lines.map((l) => lyrKey(l.text));
+  const cnt = new Map();
+  keys.forEach((k) => {
+    if (k.length >= 6) cnt.set(k, (cnt.get(k) || 0) + 1);
+  });
+  const rep2 = keys.map((k) => (cnt.get(k) || 0) >= 2);
+  const minT = dur > 0 ? dur * 0.12 : 15;
+  let best = null;
+  let i = 0;
+  while (i < lines.length) {
+    if (!rep2[i]) {
+      i += 1;
+      continue;
+    }
+    let j = i;
+    let score = 0;
+    while (j < lines.length && rep2[j]) {
+      score += cnt.get(keys[j]) || 0;
+      j += 1;
+    }
+    const len = j - i;
+    if (len >= 2 && lines[i].time >= minT) {
+      if (!best || score > best.score) best = { time: lines[i].time, score };
+    }
+    i = j;
+  }
+  if (!best) {
+    const k = rep2.findIndex((v, idx) => v && lines[idx].time >= minT);
+    if (k < 0) return null;
+    best = { time: lines[k].time };
+  }
+  let start = Math.max(0, best.time - 0.6);
+  if (dur > 0 && start + PREVIEW_LEN > dur - 3) start = Math.max(0, dur - PREVIEW_LEN - 3);
+  return start;
+}
+
+async function resolveChorusStart(track) {
+  if (!track || !track.id) return null;
+  if (CHORUS_CACHE.has(track.id)) return CHORUS_CACHE.get(track.id);
+  const dur = trackDurationSec(track);
+  let lines = null;
+  const cached = LYRICS_CACHE.get(track.id);
+  if (cached && cached.kind === 'synced' && Array.isArray(cached.lines)) lines = cached.lines;
+  if (!lines && Array.isArray(track.lyrics) && track.lyrics.length) lines = track.lyrics;
+  if (!lines) {
+    const ctl = new AbortController();
+    const to = setTimeout(() => ctl.abort(), 5000);
+    try {
+      const name = titleVariants(track.title, track.artist)[0] || track.title;
+      const qs = new URLSearchParams({ track_name: name, artist_name: firstArtistOf(track.artist) });
+      const r = await fetch(`https://lrclib.net/api/search?${qs.toString()}`, { signal: ctl.signal });
+      if (r.ok) {
+        const arr = await r.json();
+        const pool = (Array.isArray(arr) ? arr : []).filter((x) => x && x.syncedLyrics && !x.instrumental);
+        let pick = null;
+        if (dur > 0) {
+          pool.sort((a, b) => Math.abs((a.duration || 0) - dur) - Math.abs((b.duration || 0) - dur));
+          if (pool[0] && Math.abs((pool[0].duration || 0) - dur) <= 8) pick = pool[0];
+        } else {
+          pick = pool[0] || null;
+        }
+        if (pick) lines = parseLrcText(pick.syncedLyrics);
+      }
+    } catch {
+      // lanjut ke perkiraan
+    } finally {
+      clearTimeout(to);
+    }
+  }
+  let start = lines ? findChorusStart(lines, dur) : null;
+  if (start == null) start = dur > 0 ? Math.max(20, Math.min(dur * 0.36, dur - PREVIEW_LEN - 6)) : 50;
+  CHORUS_CACHE.set(track.id, start);
+  return start;
+}
+
+// Tiga titik saat intro lagu (sebelum baris pertama), seperti Spotify
+function LyricDots({ show }) {
+  return (
+    <div className="flex items-center gap-1.5 h-6 px-1 transition-opacity duration-500" style={{ opacity: show ? 1 : 0 }} aria-hidden="true">
+      {[0, 1, 2].map((i) => (
+        <span key={i} className="w-2.5 h-2.5 rounded-full bg-white/80 animate-pulse" style={{ animationDelay: `${i * 220}ms` }} />
+      ))}
+    </div>
+  );
 }
 
 function generateSmartLyricsFallback(track) {
@@ -2236,15 +2344,52 @@ export default function MusicPlayer() {
     return () => clearInterval(iv);
   }, [isPlaying, lyrics, lyricsSynced]);
 
-  // Smooth auto-scroll active lyric line into view
+  // Auto-scroll lirik ala Spotify: baris aktif di sekitar tengah; berhenti saat kamu menggulir sendiri,
+  // lalu kembali otomatis beberapa detik kemudian
+  const lyricUserAt = useRef(0);
+  const lyricResumeTimer = useRef(null);
+  const activeIdxRef = useRef(-1);
+  activeIdxRef.current = activeLineIndex;
+
+  const syncLyricScroll = useCallback((smooth = true) => {
+    const idx = activeIdxRef.current;
+    const place = (box, el, ratio) => {
+      if (!box) return;
+      const top = el ? el.offsetTop - box.clientHeight * ratio + el.clientHeight / 2 : 0;
+      box.scrollTo({ top: Math.max(0, top), behavior: smooth ? 'smooth' : 'auto' });
+    };
+    place(lyricsScrollRef.current, idx >= 0 ? activeLineRef.current : null, 0.4);
+    place(fullLyricsRef.current, idx >= 0 ? document.getElementById(`full-line-${idx}`) : null, 0.5);
+  }, []);
+
+  const noteLyricUserScroll = useCallback(() => {
+    lyricUserAt.current = Date.now();
+    clearTimeout(lyricResumeTimer.current);
+    lyricResumeTimer.current = setTimeout(() => {
+      lyricUserAt.current = 0;
+      syncLyricScroll(true);
+    }, 3500);
+  }, [syncLyricScroll]);
+
   useEffect(() => {
-    if (activeLineRef.current && lyricsScrollRef.current) {
-      activeLineRef.current.scrollIntoView({
-        behavior: 'smooth',
-        block: 'center',
-      });
-    }
-  }, [activeLineIndex]);
+    if (Date.now() - lyricUserAt.current < 3500) return;
+    syncLyricScroll(!scrubbingRef.current);
+  }, [activeLineIndex, syncLyricScroll]);
+
+  // Buka lirik layar penuh: langsung ke baris aktif tanpa animasi
+  useEffect(() => {
+    if (!fullLyrics) return undefined;
+    const raf = requestAnimationFrame(() => syncLyricScroll(false));
+    return () => cancelAnimationFrame(raf);
+  }, [fullLyrics, syncLyricScroll]);
+
+  // Ganti lagu: lirik kembali ke atas
+  useEffect(() => {
+    lyricUserAt.current = 0;
+    [lyricsScrollRef.current, fullLyricsRef.current].forEach((b) => {
+      if (b) b.scrollTo({ top: 0 });
+    });
+  }, [currentTrack?.id]);
 
   // Fetch lyrics from LRCLIB (pencocokan ketat; instrumental = tanpa lirik)
   const loadLyricsForTrack = useCallback(async (track) => {
@@ -2801,6 +2946,273 @@ export default function MusicPlayer() {
     restorePlayerVolume();
     setIsPlaying(false);
   }, [restorePlayerVolume]);
+
+  // ===== Preview reff (popup "Tambahkan lagu") =====
+  const [previewState, setPreviewState] = useState('idle'); // idle | loading | playing
+  const [previewProg, setPreviewProg] = useState(0);
+  const previewPlayerRef = useRef(null);
+  const previewPromiseRef = useRef(null);
+  const previewHostRef = useRef(null);
+  const previewTimerRef = useRef(null);
+  const previewRunRef = useRef(0);
+  const previewResumeRef = useRef(false);
+
+  const endPreview = useCallback((restore = true) => {
+    previewRunRef.current += 1;
+    clearInterval(previewTimerRef.current);
+    const pp = previewPlayerRef.current;
+    try {
+      if (pp && typeof pp.pauseVideo === 'function') pp.pauseVideo();
+    } catch {
+      // abaikan
+    }
+    setPreviewState('idle');
+    setPreviewProg(0);
+    if (previewResumeRef.current) {
+      previewResumeRef.current = false;
+      if (restore) {
+        isPlayingRef.current = true;
+        setIsPlaying(true);
+        const pl = ytPlayerRef.current;
+        try {
+          if (pl && typeof pl.playVideo === 'function') pl.playVideo();
+        } catch {
+          // abaikan
+        }
+      }
+    }
+  }, []);
+  const previewEndRef = useRef(null);
+  previewEndRef.current = endPreview;
+
+  const startPreview = useCallback((track) => {
+    if (!track || !track.videoId) return;
+    const run = ++previewRunRef.current;
+    clearInterval(previewTimerRef.current);
+    setPreviewState('loading');
+    setPreviewProg(0);
+
+    // Jeda lagu utama dulu (kalau sedang memutar), nanti dilanjutkan setelah preview selesai
+    if (isPlayingRef.current) {
+      previewResumeRef.current = true;
+      isPlayingRef.current = false;
+      setIsPlaying(false);
+      try {
+        const pl = ytPlayerRef.current;
+        if (pl && typeof pl.pauseVideo === 'function') pl.pauseVideo();
+      } catch {
+        // abaikan
+      }
+    }
+
+    const dur0 = trackDurationSec(track);
+    const known = CHORUS_CACHE.has(track.id);
+    let start = known
+      ? CHORUS_CACHE.get(track.id)
+      : dur0 > 0
+      ? Math.max(20, Math.min(dur0 * 0.36, dur0 - PREVIEW_LEN - 6))
+      : 50;
+    let live = null;
+    let ignoreUntil = 0;
+
+    const ensurePlayer = () => {
+      if (previewPromiseRef.current) return previewPromiseRef.current;
+      const host = previewHostRef.current;
+      if (!host || !window.YT || !window.YT.Player) return Promise.resolve(null);
+      previewPromiseRef.current = new Promise((resolve) => {
+        const el = document.createElement('div');
+        host.innerHTML = '';
+        host.appendChild(el);
+        const pp = new window.YT.Player(el, {
+          width: '200',
+          height: '200',
+          videoId: track.videoId,
+          playerVars: { autoplay: 0, controls: 0, playsinline: 1, rel: 0, modestbranding: 1 },
+          events: {
+            onReady: () => resolve(pp),
+            onError: () => {
+              if (previewEndRef.current) previewEndRef.current(true);
+            },
+          },
+        });
+        previewPlayerRef.current = pp;
+      });
+      return previewPromiseRef.current;
+    };
+
+    ensurePlayer().then((pp) => {
+      if (previewRunRef.current !== run) return;
+      if (!pp || typeof pp.loadVideoById !== 'function') {
+        endPreview(true);
+        setStatusMessage('Preview belum bisa diputar. Coba lagi sebentar lagi.');
+        return;
+      }
+      live = pp;
+      try {
+        pp.setVolume(0);
+        pp.loadVideoById({ videoId: track.videoId, startSeconds: start });
+      } catch {
+        endPreview(true);
+        return;
+      }
+      const t0 = Date.now();
+      previewTimerRef.current = setInterval(() => {
+        if (previewRunRef.current !== run) {
+          clearInterval(previewTimerRef.current);
+          return;
+        }
+        let cur = start;
+        let st = -2;
+        try {
+          cur = Number(pp.getCurrentTime()) || start;
+          st = pp.getPlayerState();
+        } catch {
+          // abaikan
+        }
+        if (st !== 1) {
+          if (Date.now() - t0 > 9000) {
+            endPreview(true);
+            setStatusMessage('Preview belum bisa diputar. Coba lagi sebentar lagi.');
+          } else if (st === 0 && Date.now() > ignoreUntil) {
+            endPreview(true);
+          }
+          return;
+        }
+        const el = cur - start;
+        if (Date.now() < ignoreUntil || el < 0) return;
+        setPreviewState('playing');
+        setPreviewProg(Math.min(1, el / PREVIEW_LEN));
+        const remain = PREVIEW_LEN - el;
+        const base = isMutedRef.current ? 0 : volumeRef.current;
+        const k = Math.min(1, el / 1, remain / 1.5);
+        try {
+          pp.setVolume(Math.round(base * Math.max(0, k)));
+        } catch {
+          // abaikan
+        }
+        if (remain <= 0) endPreview(true);
+      }, 200);
+    });
+
+    // Awal reff dicari dari lirik; kalau baru ketemu setelah preview jalan, loncat ke reff
+    if (!known) {
+      resolveChorusStart(track)
+        .then((s2) => {
+          if (previewRunRef.current !== run || s2 == null) return;
+          if (Math.abs(s2 - start) > 2.5) {
+            start = s2;
+            if (live) {
+              ignoreUntil = Date.now() + 1500;
+              try {
+                live.seekTo(s2, true);
+              } catch {
+                // abaikan
+              }
+            }
+          }
+        })
+        .catch(() => {});
+    }
+  }, [endPreview]);
+
+  // Siapkan awal reff begitu popup dibuka; hentikan preview saat popup ditutup
+  useEffect(() => {
+    if (pickerTrack) resolveChorusStart(pickerTrack).catch(() => {});
+  }, [pickerTrack]);
+  useEffect(() => {
+    if (!pickerTrack && previewState !== 'idle') endPreview(true);
+  }, [pickerTrack, previewState, endPreview]);
+  useEffect(() => () => {
+    clearInterval(previewTimerRef.current);
+    try {
+      if (previewPlayerRef.current && previewPlayerRef.current.destroy) previewPlayerRef.current.destroy();
+    } catch {
+      // abaikan
+    }
+  }, []);
+
+  // ===== Antrean: geser untuk mengubah urutan =====
+  const [qDrag, setQDrag] = useState(null); // { id, from, over, dy }
+  const qScrollRef = useRef(null);
+  const qRowRefs = useRef({});
+  const qInfo = useRef(null);
+  const qRaf = useRef(0);
+
+  const qCompute = () => {
+    const info = qInfo.current;
+    const sc = qScrollRef.current;
+    if (!info || !sc) return;
+    const pointerY = info.lastY - sc.getBoundingClientRect().top + sc.scrollTop;
+    const dy = pointerY - info.startContentY;
+    const me = info.rects[info.from];
+    const center = me.top + me.height / 2 + dy;
+    let over = 0;
+    info.rects.forEach((r, i) => {
+      if (i !== info.from && r.top + r.height / 2 < center) over += 1;
+    });
+    info.over = over;
+    setQDrag({ id: info.id, from: info.from, over, dy });
+  };
+  const qTick = () => {
+    const info = qInfo.current;
+    const sc = qScrollRef.current;
+    if (!info || !sc) return;
+    const r = sc.getBoundingClientRect();
+    const edge = 56;
+    let v = 0;
+    if (info.lastY < r.top + edge) v = -Math.ceil((r.top + edge - info.lastY) / 6);
+    else if (info.lastY > r.bottom - edge) v = Math.ceil((info.lastY - (r.bottom - edge)) / 6);
+    if (v) {
+      sc.scrollTop += v;
+      qCompute();
+    }
+    qRaf.current = requestAnimationFrame(qTick);
+  };
+  const qStart = (e, id, index) => {
+    const sc = qScrollRef.current;
+    if (!sc) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const scTop = sc.getBoundingClientRect().top;
+    const rects = userQueue.map((t) => {
+      const el = qRowRefs.current[t.id];
+      const r = el ? el.getBoundingClientRect() : { top: 0, height: 56 };
+      return { top: r.top - scTop + sc.scrollTop, height: r.height };
+    });
+    qInfo.current = { id, from: index, over: index, lastY: e.clientY, startContentY: e.clientY - scTop + sc.scrollTop, rects };
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // abaikan
+    }
+    navigator.vibrate?.(8);
+    setQDrag({ id, from: index, over: index, dy: 0 });
+    cancelAnimationFrame(qRaf.current);
+    qRaf.current = requestAnimationFrame(qTick);
+  };
+  const qMove = (e) => {
+    if (!qInfo.current) return;
+    qInfo.current.lastY = e.clientY;
+    qCompute();
+  };
+  const qEnd = () => {
+    const info = qInfo.current;
+    cancelAnimationFrame(qRaf.current);
+    qInfo.current = null;
+    if (!info) return;
+    if (info.over !== info.from) {
+      setUserQueue((q) => {
+        const i = q.findIndex((x) => x.id === info.id);
+        if (i < 0) return q;
+        const c = q.slice();
+        const [m] = c.splice(i, 1);
+        c.splice(Math.min(info.over, c.length), 0, m);
+        return c;
+      });
+      navigator.vibrate?.(6);
+    }
+    setQDrag(null);
+  };
 
   useEffect(() => {
     if (!sleepAt) {
@@ -3484,18 +3896,6 @@ export default function MusicPlayer() {
     scrubbingRef.current = false;
     seekToSec(sec);
   };
-
-  // Lirik penuh: baris aktif selalu di tengah layar
-  useEffect(() => {
-    if (!fullLyrics) return;
-    const box = fullLyricsRef.current;
-    const el = document.getElementById(`full-line-${activeLineIndex}`);
-    if (!box || !el) return;
-    box.scrollTo({
-      top: el.offsetTop - box.clientHeight / 2 + el.clientHeight / 2,
-      behavior: scrubbingRef.current ? 'auto' : 'smooth',
-    });
-  }, [fullLyrics, activeLineIndex]);
 
   const handleToggleLike = (trackId, e) => {
     if (e) e.stopPropagation();
@@ -4280,7 +4680,9 @@ export default function MusicPlayer() {
               {/* Synced Auto-Scrolling Lyrics Panel */}
               <div
                 ref={lyricsScrollRef}
-                className="flex-1 overflow-y-auto px-2 py-6 space-y-3.5 scroll-smooth"
+                onWheel={noteLyricUserScroll}
+                onTouchMove={noteLyricUserScroll}
+                className="relative flex-1 overflow-y-auto overscroll-contain px-2 py-6 space-y-3.5"
                 style={{
                   maskImage: 'linear-gradient(180deg, transparent 0%, #000 12%, #000 88%, transparent 100%)',
                   WebkitMaskImage:
@@ -4290,29 +4692,27 @@ export default function MusicPlayer() {
                 {lyrics.length === 0 && (
                   <NoLyrics suit={suit} loading={lyricsSource === 'Searching LRCLIB...'} instrumental={lyricsSource === 'Instrumental'} seed={currentTrack?.id} />
                 )}
+                {lyricsSynced && lyrics.length > 0 && (
+                  <LyricDots show={activeLineIndex < 0 && currentTime < lyrics[0].time - 2} />
+                )}
                 {lyrics.map((line, i) => {
-                  const isActive = i === activeLineIndex;
-                  const isPassed = i < activeLineIndex;
+                  const isActive = lyricsSynced && i === activeLineIndex;
+                  const dist = activeLineIndex < 0 ? 3 : Math.abs(i - activeLineIndex);
+                  const op = !lyricsSynced ? 0.92 : isActive ? 1 : dist === 1 ? 0.6 : dist === 2 ? 0.42 : 0.28;
                   return (
                     <p
-                      key={`${line.time}-${i}`}
+                      key={i}
                       ref={isActive ? activeLineRef : null}
-                      onClick={() => { if (lyricsSynced) seekToSec(line.time); }}
-                      style={
-                        isActive
-                          ? {
-                              color: '#ffffff',
-                              textShadow: `0 0 18px ${suit.glow}, 0 0 34px ${suit.glow}`,
-                            }
-                          : undefined
-                      }
-                      className={`text-lg sm:text-xl font-extrabold leading-snug tracking-tight cursor-pointer origin-left transition-all duration-500 ${
-                        isActive
-                          ? 'scale-[1.03] opacity-100'
-                          : isPassed
-                          ? 'opacity-45 hover:opacity-80 text-neutral-200'
-                          : 'opacity-28 hover:opacity-75 text-neutral-300'
-                      }`}
+                      onClick={() => { if (lyricsSynced) { lyricUserAt.current = 0; seekToSec(line.time); } }}
+                      style={{
+                        opacity: op,
+                        color: isActive ? '#ffffff' : undefined,
+                        textShadow: isActive ? `0 0 18px ${suit.glow}, 0 0 34px ${suit.glow}` : 'none',
+                        transform: isActive ? 'scale(1.03)' : 'scale(1)',
+                        transformOrigin: 'left center',
+                        transition: 'opacity 450ms ease, transform 450ms cubic-bezier(0.32,0.72,0,1), text-shadow 450ms ease',
+                      }}
+                      className="text-lg sm:text-xl font-extrabold leading-snug tracking-tight cursor-pointer text-neutral-300"
                     >
                       {line.text}
                     </p>
@@ -4576,7 +4976,9 @@ export default function MusicPlayer() {
 
           <div
             ref={fullLyricsRef}
-            className="relative flex-1 min-h-0 overflow-y-auto px-5 py-10 space-y-5"
+            onWheel={noteLyricUserScroll}
+            onTouchMove={noteLyricUserScroll}
+            className="relative flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 py-10 space-y-5"
             style={{
               maskImage: 'linear-gradient(180deg, transparent 0%, #000 10%, #000 90%, transparent 100%)',
               WebkitMaskImage: 'linear-gradient(180deg, transparent 0%, #000 10%, #000 90%, transparent 100%)',
@@ -4585,26 +4987,27 @@ export default function MusicPlayer() {
             {lyrics.length === 0 && (
               <NoLyrics suit={suit} loading={lyricsSource === 'Searching LRCLIB...'} instrumental={lyricsSource === 'Instrumental'} seed={currentTrack?.id} />
             )}
+            {lyricsSynced && lyrics.length > 0 && (
+              <LyricDots show={activeLineIndex < 0 && currentTime < lyrics[0].time - 2} />
+            )}
             {lyrics.map((line, i) => {
-              const isActive = i === activeLineIndex;
-              const isPassed = i < activeLineIndex;
+              const isActive = lyricsSynced && i === activeLineIndex;
+              const dist = activeLineIndex < 0 ? 3 : Math.abs(i - activeLineIndex);
+              const op = !lyricsSynced ? 0.92 : isActive ? 1 : dist === 1 ? 0.6 : dist === 2 ? 0.42 : 0.28;
               return (
                 <p
                   id={`full-line-${i}`}
-                  key={`full-${line.time}-${i}`}
-                  onClick={() => { if (lyricsSynced) seekToSec(line.time); }}
-                  style={
-                    isActive
-                      ? { color: '#ffffff', textShadow: `0 0 18px ${suit.glow}, 0 0 34px ${suit.glow}` }
-                      : undefined
-                  }
-                  className={`text-2xl font-extrabold leading-snug tracking-tight cursor-pointer transition-all duration-500 ${
-                    isActive
-                      ? 'opacity-100'
-                      : isPassed
-                      ? 'opacity-45 text-neutral-200'
-                      : 'opacity-30 text-neutral-300'
-                  }`}
+                  key={i}
+                  onClick={() => { if (lyricsSynced) { lyricUserAt.current = 0; seekToSec(line.time); } }}
+                  style={{
+                    opacity: op,
+                    color: isActive ? '#ffffff' : undefined,
+                    textShadow: isActive ? `0 0 18px ${suit.glow}, 0 0 34px ${suit.glow}` : 'none',
+                    transform: isActive ? 'scale(1.03)' : 'scale(1)',
+                    transformOrigin: 'left center',
+                    transition: 'opacity 450ms ease, transform 450ms cubic-bezier(0.32,0.72,0,1), text-shadow 450ms ease',
+                  }}
+                  className="text-2xl font-extrabold leading-snug tracking-tight cursor-pointer text-neutral-300"
                 >
                   {line.text}
                 </p>
@@ -4687,6 +5090,8 @@ export default function MusicPlayer() {
         document.body
       )}
 
+      <div ref={previewHostRef} aria-hidden="true" style={{ position: 'fixed', left: -9999, top: 0, width: 200, height: 200, pointerEvents: 'none', opacity: 0 }} />
+
       {queueToast && (
         <div
           className="fixed left-1/2 -translate-x-1/2 px-4 py-2 rounded-full text-xs font-bold text-white shadow-lg"
@@ -4718,7 +5123,7 @@ export default function MusicPlayer() {
                   </button>
                 </div>
               </div>
-              <div className="overflow-y-auto px-4 pb-4 space-y-2">
+              <div ref={qScrollRef} className="overflow-y-auto overscroll-contain px-4 pb-4 space-y-2">
                 {currentTrack && (
                   <>
                     <div className="text-[11px] font-black uppercase tracking-widest text-neutral-400">Sedang diputar</div>
@@ -4732,33 +5137,61 @@ export default function MusicPlayer() {
                   </>
                 )}
                 <div className="text-[11px] font-black uppercase tracking-widest text-neutral-400 pt-1">Berikutnya dari antrean</div>
+                {userQueue.length > 1 && (
+                  <p className="text-[11px] text-neutral-500">Tahan ikon <GripVertical className="inline w-3 h-3 -mt-0.5" /> lalu geser untuk mengubah urutan.</p>
+                )}
                 {userQueue.length === 0 && (
                   <p className="text-xs text-neutral-400">Belum ada lagu. Tekan ikon tambah di lagu mana pun, lalu pilih "Putar berikutnya" atau "Tambah ke antrean".</p>
                 )}
-                {userQueue.map((t, i) => (
-                  <div key={t.id} className="flex items-center gap-1.5 rounded-xl bg-white/[0.06] p-2">
-                    <button
-                      type="button"
-                      onClick={() => { playQueueItem(t.id); setShowQueue(false); }}
-                      className="flex items-center gap-2.5 min-w-0 flex-1 text-left"
+                {userQueue.map((t, i) => {
+                  const dragging = !!qDrag && qDrag.id === t.id;
+                  let ty = 0;
+                  if (qDrag && !dragging && qInfo.current) {
+                    const h = qInfo.current.rects[qDrag.from].height + 8;
+                    if (i > qDrag.from && i <= qDrag.over) ty = -h;
+                    else if (i < qDrag.from && i >= qDrag.over) ty = h;
+                  }
+                  return (
+                    <div
+                      key={t.id}
+                      ref={(el) => { if (el) qRowRefs.current[t.id] = el; }}
+                      className="flex items-center gap-1.5 rounded-xl bg-white/[0.06] p-2"
+                      style={
+                        dragging
+                          ? { position: 'relative', zIndex: 5, transform: `translate3d(0, ${qDrag.dy}px, 0) scale(1.02)`, boxShadow: '0 10px 30px rgba(0,0,0,0.55)', background: 'rgba(255,255,255,0.15)', transition: 'box-shadow 150ms ease, background 150ms ease' }
+                          : { transform: `translate3d(0, ${ty}px, 0)`, transition: qDrag ? 'transform 220ms cubic-bezier(0.32,0.72,0,1)' : 'none' }
+                      }
                     >
-                      <CoverImg src={t.cover} videoId={t.videoId || t.id} alt={t.title} className="w-10 h-10 rounded-lg object-cover shrink-0" />
-                      <div className="min-w-0">
-                        <div className="text-xs font-bold text-white truncate">{t.title}</div>
-                        <div className="text-[11px] text-neutral-400 truncate">{t.artist}</div>
-                      </div>
-                    </button>
-                    <button type="button" onClick={() => moveInQueue(t.id, -1)} disabled={i === 0} aria-label="Naikkan" className="p-2 rounded-full bg-white/10 text-white disabled:opacity-30 active:scale-90 transition">
-                      <ChevronRight className="w-4 h-4" style={{ transform: 'rotate(-90deg)' }} />
-                    </button>
-                    <button type="button" onClick={() => moveInQueue(t.id, 1)} disabled={i === userQueue.length - 1} aria-label="Turunkan" className="p-2 rounded-full bg-white/10 text-white disabled:opacity-30 active:scale-90 transition">
-                      <ChevronRight className="w-4 h-4" style={{ transform: 'rotate(90deg)' }} />
-                    </button>
-                    <button type="button" onClick={() => removeFromQueue(t.id)} aria-label="Hapus dari antrean" className="p-2 rounded-full bg-white/10 text-white active:scale-90 transition">
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
+                      <button
+                        type="button"
+                        onClick={() => { playQueueItem(t.id); setShowQueue(false); }}
+                        className="flex items-center gap-2.5 min-w-0 flex-1 text-left"
+                      >
+                        <CoverImg src={t.cover} videoId={t.videoId || t.id} alt={t.title} className="w-10 h-10 rounded-lg object-cover shrink-0" />
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold text-white truncate">{t.title}</div>
+                          <div className="text-[11px] text-neutral-400 truncate">{t.artist}</div>
+                        </div>
+                      </button>
+                      <button type="button" onClick={() => removeFromQueue(t.id)} aria-label="Hapus dari antrean" className="p-2 rounded-full bg-white/10 text-white active:scale-90 transition">
+                        <X className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Geser untuk mengubah urutan"
+                        onPointerDown={(e) => qStart(e, t.id, i)}
+                        onPointerMove={qMove}
+                        onPointerUp={qEnd}
+                        onPointerCancel={qEnd}
+                        onContextMenu={(e) => e.preventDefault()}
+                        className="p-2 rounded-full text-neutral-300 active:text-white cursor-grab select-none"
+                        style={{ touchAction: 'none' }}
+                      >
+                        <GripVertical className="w-5 h-5" />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>,
@@ -4789,6 +5222,28 @@ export default function MusicPlayer() {
                 <X className="w-4 h-4" />
               </button>
             </div>
+            <button
+              type="button"
+              onClick={() => (previewState === 'idle' ? startPreview(pickerTrack) : endPreview(true))}
+              className="w-full flex items-center gap-3 rounded-2xl bg-white/[0.06] p-2.5 text-left active:scale-[0.99] transition"
+            >
+              <span className="relative w-12 h-12 shrink-0">
+                <CoverImg src={pickerTrack.cover} videoId={pickerTrack.videoId || pickerTrack.id} alt={pickerTrack.title} className="w-12 h-12 rounded-xl object-cover" />
+                <span className="absolute inset-0 rounded-xl bg-black/45 flex items-center justify-center text-white">
+                  {previewState === 'loading' ? <RefreshCw className="w-5 h-5 animate-spin" /> : previewState === 'playing' ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+                </span>
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-bold text-white truncate">{pickerTrack.title}</span>
+                <span className="block text-[11px] text-neutral-400 truncate">{pickerTrack.artist}</span>
+                <span className="block mt-1.5 h-1 rounded-full bg-white/10 overflow-hidden">
+                  <span className="block h-full rounded-full" style={{ width: `${Math.round(previewProg * 100)}%`, background: suit.primary, transition: 'width 200ms linear' }} />
+                </span>
+                <span className="block mt-1 text-[10px] text-neutral-500">
+                  {previewState === 'idle' ? 'Ketuk untuk preview bagian reff (±22 detik)' : previewState === 'loading' ? 'Mencari bagian reff…' : 'Memutar bagian reff'}
+                </span>
+              </span>
+            </button>
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
