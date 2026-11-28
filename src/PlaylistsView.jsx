@@ -7,6 +7,7 @@ import {
   EllipsisVertical,
   ImagePlus,
   Pencil,
+  Pause,
   Play,
   Plus,
   Search,
@@ -488,7 +489,10 @@ function mergeAlternating(lists, max = 40) {
   return merged;
 }
 
-function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
+function AddSongsSheet({ suit, pl, songs, onToggle, onClose, onPreview, onStopPreview, previewId, previewState, previewProg }) {
+  const stopRef = useRef(onStopPreview);
+  stopRef.current = onStopPreview;
+  useEffect(() => () => { if (stopRef.current) stopRef.current(); }, []);
   const [q, setQ] = useState('');
   const [sel, setSel] = useState([]);
   const [results, setResults] = useState([]);
@@ -807,24 +811,50 @@ function AddSongsSheet({ suit, pl, songs, onToggle, onClose }) {
             const has = pl.tracks.some((t) => t.id === s.id);
             return (
               <React.Fragment key={s.id}>
-              <button
-                type="button"
-                onClick={() => handleToggle(s)}
-                className="w-full flex items-center gap-3 px-2 py-1.5 rounded-lg bg-white/[0.04] text-left active:scale-[0.99]"
+              <div
+                className="w-full flex items-center gap-1 pr-2 rounded-lg bg-white/[0.04]"
                 style={freshIds.includes(s.id) ? { animation: 'recIn 0.45s ease-out both' } : undefined}
               >
-                <img src={s.cover} alt="" className="w-10 h-10 rounded-md object-cover shrink-0" />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-xs font-bold text-white truncate">{s.title}</span>
-                  <span className="block text-[10.5px] text-neutral-400 truncate">{s.artist}</span>
-                </span>
-                <span
-                  className="w-6 h-6 rounded-full flex items-center justify-center shrink-0"
-                  style={has ? { backgroundColor: suit.primary } : { border: '1.5px solid rgba(255,255,255,0.4)' }}
+                <button
+                  type="button"
+                  onClick={() => (previewId === s.id ? onStopPreview && onStopPreview() : onPreview && onPreview(s))}
+                  aria-label="Preview reff"
+                  className="flex-1 min-w-0 flex items-center gap-3 px-2 py-1.5 text-left active:scale-[0.99]"
                 >
-                  {has ? <Check className="w-4 h-4 text-white" /> : <Plus className="w-3.5 h-3.5 text-white/70" />}
-                </span>
-              </button>
+                  <span className="relative w-10 h-10 shrink-0">
+                    <img src={s.cover} alt="" className="w-10 h-10 rounded-md object-cover" />
+                    {previewId === s.id && (
+                      <span className="absolute inset-0 rounded-md bg-black/55 flex items-center justify-center text-white">
+                        {previewState === 'loading' ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Pause className="w-4 h-4" />}
+                      </span>
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs font-bold text-white truncate">{s.title}</span>
+                    <span className="block text-[10.5px] text-neutral-400 truncate">{s.artist}</span>
+                    {previewId === s.id ? (
+                      <span className="block mt-1 h-1 rounded-full bg-white/10 overflow-hidden">
+                        <span className="block h-full rounded-full" style={{ width: `${Math.round((previewProg || 0) * 100)}%`, background: suit.primary, transition: 'width 200ms linear' }} />
+                      </span>
+                    ) : (
+                      <span className="block text-[9.5px] text-neutral-500">Ketuk untuk preview reff</span>
+                    )}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleToggle(s)}
+                  aria-label={has ? 'Hapus dari playlist' : 'Tambah ke playlist'}
+                  className="p-2 shrink-0 active:scale-90 transition"
+                >
+                  <span
+                    className="w-6 h-6 rounded-full flex items-center justify-center"
+                    style={has ? { backgroundColor: suit.primary } : { border: '1.5px solid rgba(255,255,255,0.4)' }}
+                  >
+                    {has ? <Check className="w-4 h-4 text-white" /> : <Plus className="w-3.5 h-3.5 text-white/70" />}
+                  </span>
+                </button>
+              </div>
               {addingId === s.id && (
                 <p className="text-[10.5px] px-3 py-1" style={{ color: suit.primary }}>Mencari lagu yang mirip...</p>
               )}
@@ -918,6 +948,11 @@ export function PlaylistDetail({
   onBack,
   onPlay,
   onQueue,
+  onPreview,
+  onStopPreview,
+  previewId,
+  previewState,
+  previewProg,
   shuffleOn,
   onToggleShuffle,
   onUpdate,
@@ -1199,7 +1234,7 @@ export function PlaylistDetail({
       </div>
 
       {showAdd && (
-        <AddSongsSheet suit={suit} pl={pl} songs={songs} onToggle={onToggleTrack} onClose={() => setShowAdd(false)} />
+        <AddSongsSheet suit={suit} pl={pl} songs={songs} onToggle={onToggleTrack} onClose={() => setShowAdd(false)} onPreview={onPreview} onStopPreview={onStopPreview} previewId={previewId} previewState={previewState} previewProg={previewProg} />
       )}
       {showInfo && (
         <PlaylistEditor

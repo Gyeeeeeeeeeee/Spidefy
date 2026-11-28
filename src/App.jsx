@@ -2953,6 +2953,8 @@ export default function MusicPlayer() {
   // ===== Preview reff (popup "Tambahkan lagu") =====
   const [previewState, setPreviewState] = useState('idle'); // idle | loading | playing
   const [previewProg, setPreviewProg] = useState(0);
+  const [previewId, setPreviewId] = useState(null);
+  const previewSourceRef = useRef('picker');
   const previewPlayerRef = useRef(null);
   const previewPromiseRef = useRef(null);
   const previewHostRef = useRef(null);
@@ -2971,6 +2973,7 @@ export default function MusicPlayer() {
     }
     setPreviewState('idle');
     setPreviewProg(0);
+    setPreviewId(null);
     if (previewResumeRef.current) {
       previewResumeRef.current = false;
       if (restore) {
@@ -2988,8 +2991,10 @@ export default function MusicPlayer() {
   const previewEndRef = useRef(null);
   previewEndRef.current = endPreview;
 
-  const startPreview = useCallback((track) => {
+  const startPreview = useCallback((track, source = 'picker') => {
     if (!track || !track.videoId) return;
+    previewSourceRef.current = source;
+    setPreviewId(track.id);
     const run = ++previewRunRef.current;
     clearInterval(previewTimerRef.current);
     setPreviewState('loading');
@@ -3053,12 +3058,14 @@ export default function MusicPlayer() {
       live = pp;
       try {
         pp.setVolume(0);
+        if (typeof pp.mute === 'function') pp.mute();
         pp.loadVideoById({ videoId: track.videoId, startSeconds: start });
       } catch {
         endPreview(true);
         return;
       }
       const t0 = Date.now();
+      let unmuted = false;
       previewTimerRef.current = setInterval(() => {
         if (previewRunRef.current !== run) {
           clearInterval(previewTimerRef.current);
@@ -3080,6 +3087,14 @@ export default function MusicPlayer() {
             endPreview(true);
           }
           return;
+        }
+        if (!unmuted) {
+          unmuted = true;
+          try {
+            if (typeof pp.unMute === 'function') pp.unMute();
+          } catch {
+            // abaikan
+          }
         }
         const el = cur - start;
         if (Date.now() < ignoreUntil || el < 0) return;
@@ -3123,7 +3138,7 @@ export default function MusicPlayer() {
     if (pickerTrack) resolveChorusStart(pickerTrack).catch(() => {});
   }, [pickerTrack]);
   useEffect(() => {
-    if (!pickerTrack && previewState !== 'idle') endPreview(true);
+    if (!pickerTrack && previewState !== 'idle' && previewSourceRef.current === 'picker') endPreview(true);
   }, [pickerTrack, previewState, endPreview]);
   useEffect(() => () => {
     clearInterval(previewTimerRef.current);
@@ -4439,6 +4454,11 @@ export default function MusicPlayer() {
                     onBack={() => setOpenPlaylistId(null)}
                     onPlay={playFromPlaylistPage}
                     onQueue={queueFromList}
+                    onPreview={(t) => startPreview(t, 'sheet')}
+                    onStopPreview={() => endPreview(true)}
+                    previewId={previewId}
+                    previewState={previewState}
+                    previewProg={previewProg}
                     shuffleOn={shuffleOn}
                     onToggleShuffle={handleToggleShuffle}
                     onUpdate={updatePlaylist}
